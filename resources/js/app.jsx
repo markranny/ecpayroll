@@ -19,7 +19,5 @@ createInertiaApp({
 
         root.render(<App {...props} />);
     },
-    progress: {
-        color: '#4B5563',
-    },
+    progress: false, // Disable the progress indicator completely
 });
