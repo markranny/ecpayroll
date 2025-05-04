@@ -77,18 +77,18 @@ Route::middleware(['auth', 'verified'])->group(function () {
     // Main Dashboard Route - redirects to the appropriate dashboard based on role
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
     
-    // Role-Specific Dashboard Routes
+    // Role-Specific Dashboard Routes (added direct access routes)
     Route::get('/employee/dashboard', function () {
         return Inertia::render('EmployeeDashboard', [
             'auth' => ['user' => auth()->user()]
         ]);
     })->name('employee.dashboard');
 
-    Route::get('/department-manager/dashboard', function () {
-        return Inertia::render('DepartmentManagerDashboard', [
-            'auth' => ['user' => auth()->user()]
-        ]);
-    })->middleware('role:department_manager,superadmin')->name('department_manager.dashboard');
+    // Direct department manager dashboard access route 
+    // (department managers should come here directly, skipping /dashboard)
+    Route::get('/department-manager/dashboard', [DashboardController::class, 'departmentManagerDashboard'])
+    ->middleware('role:department_manager,superadmin')
+    ->name('department_manager.dashboard');
 
     Route::get('/superadmin/dashboard', function () {
         return Inertia::render('SuperadminDashboard', [
@@ -156,6 +156,12 @@ Route::middleware(['auth', 'verified'])->group(function () {
             ->name('biometric-devices.fetch-logs');
         Route::post('/biometric-devices/diagnostic', [BiometricController::class, 'diagnosticTest'])
             ->name('biometric-devices.diagnostic');
+
+            Route::get('/hrd/dashboard', function () {
+                return Inertia::render('HrdManagerDashboard', [
+                    'auth' => ['user' => auth()->user()]
+                ]);
+            })->middleware('role:hrd_manager,superadmin')->name('hrd_manager.dashboard');
         
         // Attendance Import Routes
         Route::get('/attendance/import', [AttendanceController::class, 'showImportPage'])

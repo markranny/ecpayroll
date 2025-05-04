@@ -15,6 +15,12 @@ const OvertimeDetailModal = ({ overtime, onClose, onStatusUpdate, userRoles = {}
             return;
         }
         
+        // If status isn't changing and no remarks provided, inform the user
+        if (status === overtime.status && !remarks.trim()) {
+            alert('Please provide remarks or select a different status');
+            return;
+        }
+        
         setProcessing(true);
         
         // Create data object with status and remarks

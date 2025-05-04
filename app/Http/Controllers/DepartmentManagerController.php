@@ -157,4 +157,63 @@ class DepartmentManagerController extends Controller
                 return false;
         }
     }
+
+    public function getEmployees()
+{
+    $user = Auth::user();
+    
+    // Get managed departments
+    $managedDepartments = DepartmentManager::where('manager_id', $user->id)
+        ->pluck('department')
+        ->toArray();
+    
+    if (empty($managedDepartments)) {
+        return response()->json([
+            'message' => 'You are not assigned as a manager to any department.'
+        ], 404);
+    }
+    
+    // Get employees in these departments
+    $employees = Employee::whereIn('Department', $managedDepartments)
+        ->where('JobStatus', 'Active')
+        ->orderBy('Lname')
+        ->get();
+    
+    return response()->json([
+        'employees' => $employees,
+        'departments' => $managedDepartments
+    ]);
+}
+
+/**
+ * Get pending overtimes for approval.
+ */
+public function getPendingOvertimes()
+{
+    $user = Auth::user();
+    
+    // Get managed departments
+    $managedDepartments = DepartmentManager::where('manager_id', $user->id)
+        ->pluck('department')
+        ->toArray();
+    
+    if (empty($managedDepartments)) {
+        return response()->json([
+            'message' => 'You are not assigned as a manager to any department.'
+        ], 404);
+    }
+    
+    // Get pending overtimes for employees in these departments
+    $pendingOvertimes = Overtime::with(['employee', 'creator'])
+        ->where('status', 'pending')
+        ->whereHas('employee', function($query) use ($managedDepartments) {
+            $query->whereIn('Department', $managedDepartments);
+        })
+        ->orderBy('created_at', 'desc')
+        ->get();
+    
+    return response()->json([
+        'pendingOvertimes' => $pendingOvertimes
+    ]);
+}
 }

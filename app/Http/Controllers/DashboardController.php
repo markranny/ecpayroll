@@ -17,19 +17,20 @@ class DashboardController extends Controller
      * Display the appropriate dashboard based on user role.
      */
     public function index()
-    {
-        $user = Auth::user();
-        
-        if ($this->userHasRole($user, 'superadmin')) {
-            return $this->superAdminDashboard($user);
-        } elseif ($this->userHasRole($user, 'hrd_manager')) {
-            return $this->hrdManagerDashboard($user);
-        } elseif ($this->userHasRole($user, 'department_manager')) {
-            return $this->departmentManagerDashboard($user);
-        } else {
-            return $this->employeeDashboard($user);
-        }
+{
+    $user = Auth::user();
+    
+    if ($this->userHasRole($user, 'superadmin')) {
+        return $this->superAdminDashboard($user);
+    } elseif ($this->userHasRole($user, 'hrd_manager')) {
+        // Make sure this is using the correct route name
+        return $this->hrdManagerDashboard($user);
+    } elseif ($this->userHasRole($user, 'department_manager')) {
+        return $this->departmentManagerDashboard($user);
+    } else {
+        return $this->employeeDashboard($user);
     }
+}
     
     /**
      * Display Superadmin dashboard.
@@ -43,105 +44,117 @@ class DashboardController extends Controller
         ]);
     }
     
-    /**
-     * Display HRD Manager dashboard.
-     */
-    private function hrdManagerDashboard($user)
-    {
-        // Get pending overtime approvals for HRD manager
-        $pendingOvertimes = Overtime::with(['employee', 'departmentManager', 'departmentApprover'])
-            ->where('status', 'manager_approved')
-            ->latest()
-            ->get();
-        
-        // Get department statistics
-        $departmentsStats = $this->getDepartmentStats();
-        
-        // Get organization-wide statistics
-        $organizationStats = [
-            'totalEmployees' => Employee::count(),
-            'employeeChange' => '+5', // This would be calculated based on historical data
-            'leaveRequests' => 12, // This would be from a leave request model
-            'leaveChange' => '+2',
-            'attendanceRate' => '95%',
-            'attendanceChange' => '+1%',
-        ];
-        
-        // Recent activities
-        $recentActivities = $this->getRecentActivities();
-        
-        return Inertia::render('HrdManagerDashboard', [
-            'auth' => [
-                'user' => $user,
-            ],
-            'pendingOvertimes' => $pendingOvertimes,
-            'departmentsStats' => $departmentsStats,
-            'organizationStats' => $organizationStats,
-            'recentActivities' => $recentActivities,
-        ]);
-    }
+/**
+ * Display HRD Manager dashboard.
+ */
+private function hrdManagerDashboard($user)
+{
+    // Get pending overtime approvals for HRD manager - those approved by department managers
+    $pendingOvertimes = Overtime::with(['employee', 'departmentManager', 'departmentApprover'])
+        ->where('status', 'manager_approved')  // Only get requests approved by dept managers
+        ->latest()
+        ->get();
     
+    // Get department statistics
+    $departmentsStats = $this->getDepartmentStats();
+    
+    // Get organization-wide statistics
+    $organizationStats = [
+        'totalEmployees' => Employee::count(),
+        'employeeChange' => '+5', // This would be calculated based on historical data
+        'leaveRequests' => 12, // This would be from a leave request model
+        'leaveChange' => '+2',
+        'attendanceRate' => '95%',
+        'attendanceChange' => '+1%',
+    ];
+    
+    // Recent activities
+    $recentActivities = $this->getRecentActivities();
+    
+    return Inertia::render('HrdManagerDashboard', [
+        'auth' => [
+            'user' => $user,
+        ],
+        'pendingOvertimes' => $pendingOvertimes,
+        'departmentsStats' => $departmentsStats,
+        'organizationStats' => $organizationStats,
+        'recentActivities' => $recentActivities,
+    ]);
+}
     /**
      * Display Department Manager dashboard.
      */
-    private function departmentManagerDashboard($user)
-    {
-        // Get managed departments
-        $managedDepartments = DepartmentManager::where('manager_id', $user->id)
-            ->pluck('department')
-            ->toArray();
+    /**
+ * Display Department Manager dashboard.
+ */
+public function departmentManagerDashboard($user = null)
+{
+    // Make sure we have a user
+    if ($user === null) {
+        $user = Auth::user();
         
-        // Get employees in managed departments
-        $departmentEmployees = Employee::whereIn('Department', $managedDepartments)
-            ->get()
-            ->map(function($employee) {
-                return [
-                    'id' => $employee->id,
-                    'idno' => $employee->idno,
-                    'Fname' => $employee->Fname,
-                    'Lname' => $employee->Lname,
-                    'Department' => $employee->Department,
-                    'Jobtitle' => $employee->Jobtitle,
-                    'status' => $employee->JobStatus === 'Active' ? 'active' : 'inactive'
-                ];
-            });
-        
-        // Get pending overtime approvals for this manager
-        $pendingOvertimes = Overtime::with(['employee', 'creator'])
-            ->where('status', 'pending')
-            ->where(function($query) use ($user, $managedDepartments) {
-                $query->where('dept_manager_id', $user->id)
-                    ->orWhereHas('employee', function($q) use ($managedDepartments) {
-                        $q->whereIn('Department', $managedDepartments);
-                    });
-            })
-            ->latest()
-            ->get();
-        
-        // Department stats
-        $departmentStats = [
-            'employeeCount' => $departmentEmployees->count(),
-            'attendanceRate' => '96%',
-            'leaveRequestsCount' => 3
-        ];
-        
-        // Upcoming events (this would typically come from a calendar/events model)
-        $upcomingEvents = [
-            ['title' => 'Team Meeting', 'date' => 'Tomorrow, 10:00 AM'],
-            ['title' => 'Training Session', 'date' => 'Friday, 2:00 PM'],
-        ];
-        
-        return Inertia::render('DepartmentManagerDashboard', [
-            'auth' => [
-                'user' => $user,
-            ],
-            'pendingOvertimes' => $pendingOvertimes,
-            'departmentEmployees' => $departmentEmployees,
-            'departmentStats' => $departmentStats,
-            'upcomingEvents' => $upcomingEvents,
-            'managedDepartments' => $managedDepartments,
-        ]);
+        // If still null, redirect to login
+        if ($user === null) {
+            return redirect()->route('login');
+        }
     }
+    
+    // Get managed departments
+    $managedDepartments = DepartmentManager::where('manager_id', $user->id)
+        ->pluck('department')
+        ->toArray();
+    
+    // Get employees in managed departments
+    $departmentEmployees = Employee::whereIn('Department', $managedDepartments)
+        ->get()
+        ->map(function($employee) {
+            return [
+                'id' => $employee->id,
+                'idno' => $employee->idno,
+                'Fname' => $employee->Fname,
+                'Lname' => $employee->Lname,
+                'Department' => $employee->Department,
+                'Jobtitle' => $employee->Jobtitle,
+                'status' => $employee->JobStatus === 'Active' ? 'active' : 'inactive'
+            ];
+        });
+    
+    // Get pending overtime approvals for this manager
+    $pendingOvertimes = Overtime::with(['employee', 'creator'])
+        ->where('status', 'pending')
+        ->where(function($query) use ($user, $managedDepartments) {
+            $query->where('dept_manager_id', $user->id)
+                ->orWhereHas('employee', function($q) use ($managedDepartments) {
+                    $q->whereIn('Department', $managedDepartments);
+                });
+        })
+        ->latest()
+        ->get();
+    
+    // Department stats
+    $departmentStats = [
+        'employeeCount' => $departmentEmployees->count(),
+        'attendanceRate' => '96%',
+        'leaveRequestsCount' => 3
+    ];
+    
+    // Upcoming events (this would typically come from a calendar/events model)
+    $upcomingEvents = [
+        ['title' => 'Team Meeting', 'date' => 'Tomorrow, 10:00 AM'],
+        ['title' => 'Training Session', 'date' => 'Friday, 2:00 PM'],
+    ];
+    
+    return Inertia::render('DepartmentManagerDashboard', [
+        'auth' => [
+            'user' => $user,
+        ],
+        'pendingOvertimes' => $pendingOvertimes,
+        'departmentEmployees' => $departmentEmployees,
+        'departmentStats' => $departmentStats,
+        'upcomingEvents' => $upcomingEvents,
+        'managedDepartments' => $managedDepartments,
+    ]);
+}
     
     /**
      * Display regular Employee dashboard.

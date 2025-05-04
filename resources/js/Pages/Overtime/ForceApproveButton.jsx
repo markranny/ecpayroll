@@ -1,4 +1,5 @@
-// resources/js/Pages/Overtime/ForceApproveButton.jsx
+// Update ForceApproveButton.jsx to include page reload functionality
+
 import React, { useState } from 'react';
 import { router } from '@inertiajs/react';
 import { Zap } from 'lucide-react';
@@ -33,10 +34,15 @@ const ForceApproveButton = ({ selectedIds, disabled }) => {
             overtime_ids: selectedIds,
             remarks: remarks
         }, {
-            preserveScroll: true,
+            preserveScroll: false, // Changed to false to allow full page reload
             onSuccess: () => {
                 closeModal();
                 setProcessing(false);
+                
+                // Reload the page after a brief delay to allow the server-side processing to complete
+                setTimeout(() => {
+                    window.location.href = route('overtimes.index');
+                }, 300);
             },
             onError: (errors) => {
                 console.error('Error force approving:', errors);

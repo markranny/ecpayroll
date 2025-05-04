@@ -378,7 +378,6 @@ const OvertimeList = ({
         window.open(exportUrl, '_blank');
     };
 
-    // Determine which overtimes can be selected based on user role and status
     const canSelectOvertime = (overtime) => {
         if (userRoles.isSuperAdmin) {
             // Superadmin can select any overtime that's pending or manager approved

@@ -19,7 +19,7 @@ return Application::configure(basePath: dirname(__DIR__))
 
         // Add role middleware to web group for auth routes
         $middleware->web(append: [
-            // You can add global web middleware here if needed
+            // Don't add the RoleRedirectionMiddleware here to avoid redirect loops
         ]);
 
         // Define custom middleware groups

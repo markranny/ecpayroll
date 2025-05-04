@@ -15,13 +15,38 @@ import {
     Bell,
     BarChart4,
     UserRoundCog,
-    FileText
+    FileText,
+    CheckCircle
 } from 'lucide-react';
 import OvertimeStatusBadge from './Overtime/OvertimeStatusBadge';
 
 const HrdManagerDashboard = () => {
     const { props } = usePage();
     const { auth, pendingOvertimes = [], departmentsStats = [], organizationStats = {}, recentActivities = [] } = props;
+    
+    // Handle view of pending overtime approvals
+    const handleViewOvertime = (overtimeId) => {
+        router.get(route('overtimes.index', { selected: overtimeId }));
+    };
+
+    // Add a bulk approval function
+    const handleBulkApprove = () => {
+        if (pendingOvertimes.length === 0) return;
+        
+        const selectedIds = pendingOvertimes.map(overtime => overtime.id);
+        
+        if (confirm(`Are you sure you want to approve ${selectedIds.length} overtime requests?`)) {
+            router.post(route('overtimes.bulkUpdateStatus'), {
+                overtime_ids: selectedIds,
+                status: 'approved',
+                remarks: 'Bulk approved by HRD'
+            }, {
+                onSuccess: () => {
+                    // Success notification would be handled by the parent component
+                }
+            });
+        }
+    };
     
     // Stats setup
     const stats = [
@@ -59,11 +84,6 @@ const HrdManagerDashboard = () => {
         }
     ];
 
-    // Handle view of pending overtime approvals
-    const handleViewOvertime = (overtimeId) => {
-        router.get(route('overtimes.index', { selected: overtimeId }));
-    };
-
     return (
         <AuthenticatedLayout user={auth.user}>
             <Head title="HRD Manager Dashboard" />
@@ -89,6 +109,7 @@ const HrdManagerDashboard = () => {
                                         {pendingOvertimes.length}
                                     </span>
                                 </button>
+                                
                                 <a
                                     href={route('reports.index')}
                                     className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-colors duration-200 flex items-center"
@@ -131,10 +152,21 @@ const HrdManagerDashboard = () => {
                             {/* Pending OT Approvals */}
                             <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-100 p-6">
                                 <div className="flex items-center justify-between mb-6">
-                                    <h2 className="text-lg font-semibold text-gray-900">Pending Overtime Approvals</h2>
-                                    <a href={route('overtimes.index')} className="text-sm font-medium text-indigo-600 hover:text-indigo-800">
-                                        View All
-                                    </a>
+                                    <h2 className="text-lg font-semibold text-gray-900">Pending Overtime Approvals (Dept. Approved)</h2>
+                                    <div className="flex space-x-2">
+                                        {pendingOvertimes.length > 0 && (
+                                            <button
+                                                onClick={handleBulkApprove}
+                                                className="px-3 py-1 bg-green-600 text-white rounded-md text-sm hover:bg-green-700 flex items-center"
+                                            >
+                                                <CheckCircle className="h-4 w-4 mr-1" />
+                                                Approve All
+                                            </button>
+                                        )}
+                                        <a href={route('overtimes.index')} className="text-sm font-medium text-indigo-600 hover:text-indigo-800">
+                                            View All
+                                        </a>
+                                    </div>
                                 </div>
                                 
                                 {pendingOvertimes.length === 0 ? (
@@ -161,6 +193,9 @@ const HrdManagerDashboard = () => {
                                                     </th>
                                                     <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                                         Status
+                                                    </th>
+                                                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                        Dept. Approved By
                                                     </th>
                                                     <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                                                         Actions
@@ -195,6 +230,14 @@ const HrdManagerDashboard = () => {
                                                         </td>
                                                         <td className="px-6 py-4 whitespace-nowrap">
                                                             <OvertimeStatusBadge status={overtime.status} />
+                                                        </td>
+                                                        <td className="px-6 py-4 whitespace-nowrap">
+                                                            <div className="text-sm text-gray-900">
+                                                                {overtime.departmentApprover?.name || 'N/A'}
+                                                            </div>
+                                                            <div className="text-sm text-gray-500">
+                                                                {overtime.dept_approved_at ? new Date(overtime.dept_approved_at).toLocaleDateString() : 'N/A'}
+                                                            </div>
                                                         </td>
                                                         <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                                                             <button
