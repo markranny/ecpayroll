@@ -144,6 +144,132 @@ class OvertimeController extends Controller
     return $userRoles;
 }
 
+/**
+ * Bulk update the status of multiple overtime requests.
+ */
+public function bulkUpdateStatus(Request $request)
+{
+    $user = Auth::user();
+    
+    // Validate request
+    $validated = $request->validate([
+        'overtime_ids' => 'required|array',
+        'overtime_ids.*' => 'required|integer|exists:overtimes,id',
+        'status' => 'required|in:manager_approved,approved,rejected',
+        'remarks' => 'nullable|string|max:500',
+    ]);
+    
+    // Log the bulk update action
+    \Log::info('Bulk update of overtime statuses initiated', [
+        'user_id' => $user->id,
+        'user_name' => $user->name,
+        'count' => count($validated['overtime_ids']),
+        'target_status' => $validated['status']
+    ]);
+    
+    $successCount = 0;
+    $failCount = 0;
+    $errors = [];
+    
+    DB::beginTransaction();
+    
+    try {
+        foreach ($validated['overtime_ids'] as $overtimeId) {
+            $overtime = Overtime::findOrFail($overtimeId);
+            $currentStatus = $overtime->status;
+            
+            // Check permission for the specific overtime
+            $canUpdate = false;
+            
+            // Department manager can approve pending overtime for their department
+            if ($currentStatus === 'pending' && $validated['status'] === 'manager_approved') {
+                $isDeptManager = $this->isDepartmentManagerFor($user, $overtime);
+                if ($isDeptManager || $this->isSuperAdmin($user)) {
+                    $canUpdate = true;
+                    
+                    // Update department manager approval info
+                    $overtime->dept_approved_by = $user->id;
+                    $overtime->dept_approved_at = now();
+                    $overtime->dept_remarks = $validated['remarks'] ?? 'Bulk approved by department manager';
+                }
+            }
+            // HRD manager can approve manager_approved overtime to final approved status
+            elseif ($currentStatus === 'manager_approved' && $validated['status'] === 'approved') {
+                if ($this->isHrdManager($user) || $this->isSuperAdmin($user)) {
+                    $canUpdate = true;
+                    
+                    // Update HRD manager approval info
+                    $overtime->hrd_approved_by = $user->id;
+                    $overtime->hrd_approved_at = now();
+                    $overtime->hrd_remarks = $validated['remarks'] ?? 'Bulk approved by HRD manager';
+                }
+            }
+            // Either department manager or HRD manager can reject based on current status
+            elseif ($validated['status'] === 'rejected') {
+                if ($currentStatus === 'pending') {
+                    // Department manager can reject pending overtime
+                    $isDeptManager = $this->isDepartmentManagerFor($user, $overtime);
+                    if ($isDeptManager || $this->isSuperAdmin($user)) {
+                        $canUpdate = true;
+                        
+                        // Update department manager rejection info
+                        $overtime->dept_approved_by = $user->id;
+                        $overtime->dept_approved_at = now();
+                        $overtime->dept_remarks = $validated['remarks'] ?? 'Bulk rejected by department manager';
+                    }
+                } elseif ($currentStatus === 'manager_approved') {
+                    // HRD manager can reject manager_approved overtime
+                    if ($this->isHrdManager($user) || $this->isSuperAdmin($user)) {
+                        $canUpdate = true;
+                        
+                        // Update HRD manager rejection info
+                        $overtime->hrd_approved_by = $user->id;
+                        $overtime->hrd_approved_at = now();
+                        $overtime->hrd_remarks = $validated['remarks'] ?? 'Bulk rejected by HRD manager';
+                    }
+                }
+            }
+            
+            // Skip if not authorized to update this overtime
+            if (!$canUpdate) {
+                $failCount++;
+                $errors[] = "Not authorized to update overtime #{$overtimeId} from status '{$currentStatus}' to '{$validated['status']}'";
+                continue;
+            }
+            
+            // Update the status and save
+            $overtime->status = $validated['status'];
+            $overtime->save();
+            $successCount++;
+            
+            \Log::info("Successfully updated overtime #{$overtimeId}", [
+                'from_status' => $currentStatus,
+                'to_status' => $validated['status'],
+                'by_user' => $user->name
+            ]);
+        }
+        
+        DB::commit();
+        
+        // Create success message
+        $message = "{$successCount} overtime requests updated successfully.";
+        if ($failCount > 0) {
+            $message .= " {$failCount} updates failed.";
+        }
+        
+        return redirect()->back()->with('message', $message);
+    } catch (\Exception $e) {
+        DB::rollBack();
+        
+        \Log::error('Error during bulk overtime update', [
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString()
+        ]);
+        
+        return redirect()->back()->with('error', 'Error updating overtime statuses: ' . $e->getMessage());
+    }
+}
+
     private function isHrdManager($user)
 {
     // First try checking through the roles relationship

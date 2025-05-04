@@ -96,11 +96,10 @@ Route::middleware(['auth', 'verified'])->group(function () {
         ]);
     })->middleware('role:superadmin')->name('superadmin.dashboard');
 
-    Route::get('/hrd/dashboard', function () {
-        return Inertia::render('HrdManagerDashboard', [
-            'auth' => ['user' => auth()->user()]
-        ]);
-    })->middleware('role:hrd_manager,superadmin')->name('hrd_manager.dashboard');
+    // HRD Manager Dashboard route - use the controller method for proper data loading
+    Route::get('/hrd/dashboard', [DashboardController::class, 'hrdManagerDashboard'])
+    ->middleware('role:hrd_manager,superadmin')
+    ->name('hrd_manager.dashboard');
 
     Route::get('/finance/dashboard', function () {
         return Inertia::render('FinanceDashboard', [
@@ -156,12 +155,6 @@ Route::middleware(['auth', 'verified'])->group(function () {
             ->name('biometric-devices.fetch-logs');
         Route::post('/biometric-devices/diagnostic', [BiometricController::class, 'diagnosticTest'])
             ->name('biometric-devices.diagnostic');
-
-            Route::get('/hrd/dashboard', function () {
-                return Inertia::render('HrdManagerDashboard', [
-                    'auth' => ['user' => auth()->user()]
-                ]);
-            })->middleware('role:hrd_manager,superadmin')->name('hrd_manager.dashboard');
         
         // Attendance Import Routes
         Route::get('/attendance/import', [AttendanceController::class, 'showImportPage'])

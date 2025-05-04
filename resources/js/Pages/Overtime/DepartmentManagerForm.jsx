@@ -80,6 +80,16 @@ const DepartmentManagerForm = ({ departments, users, existingManagers = [] }) =>
         }
     };
     
+    // When a manager_id is selected, update the search term to display the selected name
+    useEffect(() => {
+        if (formData.manager_id) {
+            const selectedUser = users.find(u => u.id === parseInt(formData.manager_id));
+            if (selectedUser) {
+                setSearchTerm(selectedUser.name);
+            }
+        }
+    }, [formData.manager_id, users]);
+    
     return (
         <div className="bg-white shadow-md rounded-lg overflow-hidden">
             <div className="p-4 border-b">
@@ -179,6 +189,12 @@ const DepartmentManagerForm = ({ departments, users, existingManagers = [] }) =>
                                     className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                     value={searchTerm}
                                     onChange={(e) => setSearchTerm(e.target.value)}
+                                    onFocus={() => {
+                                        // Show all users when focusing if nothing is typed
+                                        if (!searchTerm) {
+                                            setFilteredUsers(users);
+                                        }
+                                    }}
                                 />
                                 {searchTerm && filteredUsers.length > 0 && (
                                     <div className="absolute z-10 w-full mt-1 bg-white shadow-lg rounded-md max-h-60 overflow-y-auto">

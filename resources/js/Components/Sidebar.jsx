@@ -182,18 +182,9 @@ const Sidebar = ({ showSidebar = true }) => {
             label: 'Employees',
             allowedRoles: ['superadmin', 'finance', 'hrd_manager'],
             items: [
-                { label: 'Employee List', path: route('employees.index') }, // Use route() instead of hardcoded path
-                { label: 'View Inactive Employees', path: route('employees.index', { status: 'Inactive' }) },
-                { label: 'Block Employees', path: route('employees.index', { status: 'Blocked' }) },
+                { label: 'Employee List', path: route('employees.index') }, 
                 { label: 'Import Employees', path: route('employees.import') }
             ]
-        },
-        {
-            icon: Clock,
-            label: 'Overtime',
-            allowedRoles: ['superadmin', 'hrd_manager', 'department_manager', 'employee'],
-            path: '/overtimes',
-            highlightCount: 0 // This can be filled in from props or API call
         },
         {
             icon: ClipboardCheck,

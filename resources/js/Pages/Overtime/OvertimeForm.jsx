@@ -18,34 +18,92 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
     });
     
     // Filtered employees state
-    const [filteredEmployees, setFilteredEmployees] = useState(employees || []);
+    const [displayedEmployees, setDisplayedEmployees] = useState(employees || []);
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedDepartment, setSelectedDepartment] = useState('');
     
     // Rate help modal state
     const [showRateHelpModal, setShowRateHelpModal] = useState(false);
     
-    // Update filtered employees when search or department selection changes
+    // Update displayed employees when search or department selection changes
     useEffect(() => {
-        let result = employees || [];
+        // Define our categories of employees
+        let exactSearchMatches = [];
+        let partialSearchMatches = [];
+        let selectedButNotMatched = [];
+        let otherEmployees = [];
         
-        // Filter by search term
-        if (searchTerm) {
-            const term = searchTerm.toLowerCase();
-            result = result.filter(employee => 
-                employee.Fname.toLowerCase().includes(term) || 
-                employee.Lname.toLowerCase().includes(term) || 
-                employee.idno?.toString().includes(term)
-            );
+        employees.forEach(employee => {
+            const isSelected = formData.employee_ids.includes(employee.id);
+            
+            // Check search match
+            let matchesSearch = true;
+            let exactMatch = false;
+            
+            if (searchTerm) {
+                const term = searchTerm.toLowerCase().trim();
+                const fullName = `${employee.Fname} ${employee.Lname}`.toLowerCase();
+                const reverseName = `${employee.Lname} ${employee.Fname}`.toLowerCase();
+                
+                // Check for exact match first
+                if (
+                    employee.Lname.toLowerCase() === term || 
+                    employee.Fname.toLowerCase() === term ||
+                    fullName === term ||
+                    reverseName === term ||
+                    employee.idno?.toString() === term
+                ) {
+                    exactMatch = true;
+                    matchesSearch = true;
+                } else {
+                    // Check for partial match
+                    matchesSearch = 
+                        employee.Fname.toLowerCase().includes(term) || 
+                        employee.Lname.toLowerCase().includes(term) || 
+                        employee.idno?.toString().includes(term);
+                }
+            }
+            
+            // Check department match
+            let matchesDepartment = true;
+            if (selectedDepartment) {
+                matchesDepartment = employee.Department === selectedDepartment;
+            }
+            
+            // Categorize based on matches and selection status
+            if (exactMatch && matchesDepartment) {
+                exactSearchMatches.push(employee);
+            } else if (matchesSearch && matchesDepartment) {
+                partialSearchMatches.push(employee);
+            } else if (isSelected) {
+                selectedButNotMatched.push(employee);
+            } else {
+                otherEmployees.push(employee);
+            }
+        });
+        
+        // Combine all categories in priority order
+        const result = [
+            ...exactSearchMatches,
+            ...partialSearchMatches,
+            ...selectedButNotMatched,
+            ...otherEmployees
+        ];
+        
+        // When no search/filter applied, move selected to top
+        if (!searchTerm && !selectedDepartment) {
+            result.sort((a, b) => {
+                const aSelected = formData.employee_ids.includes(a.id);
+                const bSelected = formData.employee_ids.includes(b.id);
+                
+                if (aSelected && !bSelected) return -1;
+                if (!aSelected && bSelected) return 1;
+                return 0;
+            });
         }
         
-        // Filter by department
-        if (selectedDepartment) {
-            result = result.filter(employee => employee.Department === selectedDepartment);
-        }
-        
-        setFilteredEmployees(result);
-    }, [searchTerm, selectedDepartment, employees]);
+        setDisplayedEmployees(result);
+    }, [searchTerm, selectedDepartment, employees, formData.employee_ids]);
     
     // Handle input changes
     const handleChange = (e) => {
@@ -77,28 +135,34 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
         });
     };
     
-    // Handle select all employees (filtered ones only)
+    // Handle individual checkbox change - directly modify the checkbox without affecting the row click
+    const handleCheckboxChange = (e, employeeId) => {
+        e.stopPropagation(); // Prevent row click handler from firing
+        handleEmployeeSelection(employeeId);
+    };
+    
+    // Handle select all employees (currently displayed only)
     const handleSelectAll = () => {
         setFormData(prevData => {
-            // Get IDs of all filtered employees
-            const filteredIds = filteredEmployees.map(emp => emp.id);
+            // Get IDs of all currently displayed employees
+            const displayedIds = displayedEmployees.map(emp => emp.id);
             
-            // Check if all filtered employees are already selected
-            const allSelected = filteredIds.every(id => prevData.employee_ids.includes(id));
+            // Check if all displayed employees are already selected
+            const allSelected = displayedIds.every(id => prevData.employee_ids.includes(id));
             
             if (allSelected) {
                 // If all are selected, deselect them
                 return {
                     ...prevData,
-                    employee_ids: prevData.employee_ids.filter(id => !filteredIds.includes(id))
+                    employee_ids: prevData.employee_ids.filter(id => !displayedIds.includes(id))
                 };
             } else {
-                // If not all are selected, select all filtered employees
-                // First remove any existing filtered employees to avoid duplicates
-                const remainingSelectedIds = prevData.employee_ids.filter(id => !filteredIds.includes(id));
+                // If not all are selected, select all displayed employees
+                // First remove any existing displayed employees to avoid duplicates
+                const remainingSelectedIds = prevData.employee_ids.filter(id => !displayedIds.includes(id));
                 return {
                     ...prevData,
-                    employee_ids: [...remainingSelectedIds, ...filteredIds]
+                    employee_ids: [...remainingSelectedIds, ...displayedIds]
                 };
             }
         });
@@ -145,13 +209,11 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
         // Reset filters
         setSearchTerm('');
         setSelectedDepartment('');
-        
-        // Note: removed window.location.reload() to prevent full page refresh
     };
     
-    // Calculate if all filtered employees are selected
-    const allFilteredSelected = filteredEmployees.length > 0 && 
-        filteredEmployees.every(emp => formData.employee_ids.includes(emp.id));
+    // Calculate if all displayed employees are selected
+    const allDisplayedSelected = displayedEmployees.length > 0 && 
+        displayedEmployees.every(emp => formData.employee_ids.includes(emp.id));
     
     // Get selected employees details for display
     const selectedEmployees = employees.filter(emp => formData.employee_ids.includes(emp.id));
@@ -197,13 +259,13 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
                                 <button
                                     type="button"
                                     className={`w-full px-4 py-2 rounded-md ${
-                                        allFilteredSelected 
+                                        allDisplayedSelected 
                                             ? 'bg-indigo-700 hover:bg-indigo-800' 
                                             : 'bg-indigo-500 hover:bg-indigo-600'
                                     } text-white focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500`}
                                     onClick={handleSelectAll}
                                 >
-                                    {allFilteredSelected ? 'Deselect All' : 'Select All'}
+                                    {allDisplayedSelected ? 'Deselect All' : 'Select All'}
                                 </button>
                             </div>
                         </div>
@@ -231,14 +293,14 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
                                 </thead>
                                 
                                 <tbody className="bg-white divide-y divide-gray-200">
-                                    {filteredEmployees.length === 0 ? (
+                                    {displayedEmployees.length === 0 ? (
                                         <tr>
                                             <td colSpan="5" className="px-4 py-3 text-center text-sm text-gray-500">
                                                 No employees match your search criteria
                                             </td>
                                         </tr>
                                     ) : (
-                                        filteredEmployees.map(employee => (
+                                        displayedEmployees.map(employee => (
                                             <tr 
                                                 key={employee.id} 
                                                 className={`hover:bg-gray-50 cursor-pointer ${
@@ -251,7 +313,7 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
                                                         type="checkbox"
                                                         className="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                                         checked={formData.employee_ids.includes(employee.id)}
-                                                        onChange={() => {}}
+                                                        onChange={(e) => handleCheckboxChange(e, employee.id)}
                                                         onClick={(e) => e.stopPropagation()}
                                                     />
                                                 </td>
