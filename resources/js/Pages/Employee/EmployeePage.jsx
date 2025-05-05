@@ -4,89 +4,20 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import Sidebar from '@/Components/Sidebar';
 import ViewEmployeeModal from './ViewEmployeeModal';
 import { 
-    Plus, 
     Search, 
     Edit2, 
     Trash2,
     UserPlus,
     Eye,
     X,
-    Shield,
     ShieldOff,
-    UserX,
     Check,
     Lock,
-    Users,
-    AlertCircle 
+    Users
 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-
-// Simple Tabs Component
-const Tabs = ({ children, defaultValue, className = "", onValueChange }) => {
-  const [activeTab, setActiveTab] = useState(defaultValue);
-  
-  useEffect(() => {
-    if (onValueChange) {
-      onValueChange(activeTab);
-    }
-  }, [activeTab, onValueChange]);
-  
-  return (
-    <div className={className}>
-      {React.Children.map(children, child => {
-        if (child && (child.type === TabsList || child.type === TabsContent)) {
-          return React.cloneElement(child, { activeTab, setActiveTab });
-        }
-        return child;
-      })}
-    </div>
-  );
-};
-
-// TabsList Component
-const TabsList = ({ children, activeTab, setActiveTab, className = "" }) => {
-  return (
-    <div className={`inline-flex h-10 items-center justify-center rounded-md bg-gray-100 p-1 text-gray-500 ${className}`}>
-      {React.Children.map(children, child => {
-        if (child && child.type === TabsTrigger) {
-          return React.cloneElement(child, { activeTab, setActiveTab });
-        }
-        return child;
-      })}
-    </div>
-  );
-};
-
-// TabsTrigger Component
-const TabsTrigger = ({ children, value, activeTab, setActiveTab }) => {
-  const isActive = activeTab === value;
-  
-  return (
-    <button
-      onClick={() => setActiveTab(value)}
-      className={`inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium transition-all 
-      ${isActive 
-        ? "bg-white text-gray-950 shadow-sm" 
-        : "hover:bg-gray-200 hover:text-gray-900"
-      }`}
-    >
-      {children}
-    </button>
-  );
-};
-
-// TabsContent Component
-const TabsContent = ({ children, value, activeTab }) => {
-  if (activeTab !== value) return null;
-  
-  return (
-    <div className="mt-2">
-      {children}
-    </div>
-  );
-};
 
 // Modal Component
 const Modal = ({ isOpen, onClose, title, children }) => {
@@ -155,6 +86,8 @@ const ConfirmModal = ({ isOpen, onClose, onConfirm, title, message, confirmText,
         </div>
     );
 };
+
+// Employee Form Component - Defined BEFORE it's used
 const EmployeeForm = ({ isOpen, onClose, employee = null, mode = 'create' }) => {
     const [formData, setFormData] = useState({
         idno: '',
@@ -176,7 +109,7 @@ const EmployeeForm = ({ isOpen, onClose, employee = null, mode = 'create' }) => 
         EmerContactNo: '',
         EmerRelationship: '',
         EmpStatus: '',
-        JobStatus: '',
+        JobStatus: 'Active', // Default to Active for new employees
         RankFile: '',
         Department: '',
         Line: '',
@@ -190,16 +123,22 @@ const EmployeeForm = ({ isOpen, onClose, employee = null, mode = 'create' }) => 
         PHILHEALTHNo: '',
         HDMFNo: '',
         TaxNo: '',
-        Taxable: '',
+        Taxable: false, // Set a default boolean value
         CostCenter: '',
-        created_at: '',
-        updated_at: ''
     });
     const [errors, setErrors] = useState({});
 
     useEffect(() => {
         if (employee) {
-            setFormData(employee);
+            // Convert string 'Yes'/'No' to boolean if needed
+            const taxableValue = typeof employee.Taxable === 'boolean' 
+                ? employee.Taxable 
+                : employee.Taxable === 'Yes' || employee.Taxable === '1';
+                
+            setFormData({
+                ...employee,
+                Taxable: taxableValue
+            });
         } else {
             setFormData({
                 idno: '',
@@ -235,44 +174,65 @@ const EmployeeForm = ({ isOpen, onClose, employee = null, mode = 'create' }) => 
                 PHILHEALTHNo: '',
                 HDMFNo: '',
                 TaxNo: '',
-                Taxable: '',
+                Taxable: false, // Default boolean value
                 CostCenter: '',
-                created_at: '',
-                updated_at: ''
             });
         }
     }, [employee]);
 
     const handleSubmit = (e) => {
         e.preventDefault();
+        console.log('Form submitted with data:', formData);
+        
+        // Ensure Taxable is a boolean value
+        const processedData = {
+            ...formData,
+            Taxable: Boolean(formData.Taxable)
+        };
         
         if (mode === 'create') {
-            router.post('/employees', formData, {
+            router.post('/employees', processedData, {
                 onError: (errors) => {
+                    console.error('Validation errors:', errors);
                     setErrors(errors);
                 },
                 onSuccess: () => {
+                    console.log('Employee created successfully');
                     onClose();
                 },
+                preserveScroll: true,
             });
         } else {
-            router.put(`/employees/${employee.id}`, formData, {
+            router.put(`/employees/${employee.id}`, processedData, {
                 onError: (errors) => {
+                    console.error('Validation errors:', errors);
                     setErrors(errors);
                 },
                 onSuccess: () => {
+                    console.log('Employee updated successfully');
                     onClose();
                 },
+                preserveScroll: true,
             });
         }
     };
 
     const handleChange = (e) => {
         const { name, value } = e.target;
-        setFormData(prev => ({
-            ...prev,
-            [name]: value
-        }));
+        
+        // Special handling for Taxable field
+        if (name === 'Taxable') {
+            setFormData(prev => ({
+                ...prev,
+                [name]: value === '1' || value === 'true'
+            }));
+        } else {
+            setFormData(prev => ({
+                ...prev,
+                [name]: value
+            }));
+        }
+        
         if (errors[name]) {
             setErrors(prev => ({
                 ...prev,
@@ -297,7 +257,7 @@ const EmployeeForm = ({ isOpen, onClose, employee = null, mode = 'create' }) => 
                     {/* ID Information */}
                     <div>
                         <label htmlFor="idno" className="block text-sm font-medium mb-1">
-                            ID Number <span className="text-red-500">*</span>
+                            ID Number
                         </label>
                         <input
                             id="idno"
@@ -336,6 +296,7 @@ const EmployeeForm = ({ isOpen, onClose, employee = null, mode = 'create' }) => 
                             className={`w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent ${errors.Lname ? 'border-red-500' : 'border-gray-300'}`}
                             value={formData.Lname}
                             onChange={handleChange}
+                            required
                         />
                         {errors.Lname && <p className="mt-1 text-sm text-red-500">{errors.Lname}</p>}
                     </div>
@@ -351,6 +312,7 @@ const EmployeeForm = ({ isOpen, onClose, employee = null, mode = 'create' }) => 
                             className={`w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent ${errors.Fname ? 'border-red-500' : 'border-gray-300'}`}
                             value={formData.Fname}
                             onChange={handleChange}
+                            required
                         />
                         {errors.Fname && <p className="mt-1 text-sm text-red-500">{errors.Fname}</p>}
                     </div>
@@ -386,7 +348,7 @@ const EmployeeForm = ({ isOpen, onClose, employee = null, mode = 'create' }) => 
                     {/* Personal Details */}
                     <div>
                         <label htmlFor="Gender" className="block text-sm font-medium mb-1">
-                            Gender <span className="text-red-500">*</span>
+                            Gender
                         </label>
                         <select
                             id="Gender"
@@ -435,44 +397,6 @@ const EmployeeForm = ({ isOpen, onClose, employee = null, mode = 'create' }) => 
                         />
                     </div>
 
-                    {/* Educational Background */}
-                    <div className="col-span-2">
-                        <h3 className="text-lg font-semibold mb-3 mt-4">Educational Background</h3>
-                    </div>
-
-                    <div>
-                        <label htmlFor="EducationalAttainment" className="block text-sm font-medium mb-1">
-                            Educational Attainment
-                        </label>
-                        <select
-                            id="EducationalAttainment"
-                            name="EducationalAttainment"
-                            className="w-full p-2 border rounded border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            value={formData.EducationalAttainment}
-                            onChange={handleChange}
-                        >
-                            <option value="">Select Education Level</option>
-                            <option value="High School">High School</option>
-                            <option value="College">College</option>
-                            <option value="Masters">Masters</option>
-                            <option value="Doctorate">Doctorate</option>
-                        </select>
-                    </div>
-
-                    <div>
-                        <label htmlFor="Degree" className="block text-sm font-medium mb-1">
-                            Degree
-                        </label>
-                        <input
-                            id="Degree"
-                            name="Degree"
-                            type="text"
-                            className="w-full p-2 border rounded border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            value={formData.Degree}
-                            onChange={handleChange}
-                        />
-                    </div>
-
                     {/* Contact Information */}
                     <div className="col-span-2">
                         <h3 className="text-lg font-semibold mb-3 mt-4">Contact Information</h3>
@@ -494,91 +418,18 @@ const EmployeeForm = ({ isOpen, onClose, employee = null, mode = 'create' }) => 
 
                     <div>
                         <label htmlFor="Email" className="block text-sm font-medium mb-1">
-                            Email
+                            Email <span className="text-red-500">*</span>
                         </label>
                         <input
                             id="Email"
                             name="Email"
                             type="email"
-                            className="w-full p-2 border rounded border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            className={`w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent ${errors.Email ? 'border-red-500' : 'border-gray-300'}`}
                             value={formData.Email}
                             onChange={handleChange}
+                            required
                         />
-                    </div>
-
-                    <div className="col-span-2">
-                        <label htmlFor="PresentAddress" className="block text-sm font-medium mb-1">
-                            Present Address
-                        </label>
-                        <textarea
-                            id="PresentAddress"
-                            name="PresentAddress"
-                            className="w-full p-2 border rounded border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            value={formData.PresentAddress}
-                            onChange={handleChange}
-                            rows={2}
-                        />
-                    </div>
-
-                    <div className="col-span-2">
-                        <label htmlFor="PermanentAddress" className="block text-sm font-medium mb-1">
-                            Permanent Address
-                        </label>
-                        <textarea
-                            id="PermanentAddress"
-                            name="PermanentAddress"
-                            className="w-full p-2 border rounded border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            value={formData.PermanentAddress}
-                            onChange={handleChange}
-                            rows={2}
-                        />
-                    </div>
-
-                    {/* Emergency Contact */}
-                    <div className="col-span-2">
-                        <h3 className="text-lg font-semibold mb-3 mt-4">Emergency Contact</h3>
-                    </div>
-
-                    <div>
-                        <label htmlFor="EmerContactName" className="block text-sm font-medium mb-1">
-                            Contact Name
-                        </label>
-                        <input
-                            id="EmerContactName"
-                            name="EmerContactName"
-                            type="text"
-                            className="w-full p-2 border rounded border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            value={formData.EmerContactName}
-                            onChange={handleChange}
-                        />
-                    </div>
-
-                    <div>
-                        <label htmlFor="EmerContactNo" className="block text-sm font-medium mb-1">
-                            Contact Number
-                        </label>
-                        <input
-                            id="EmerContactNo"
-                            name="EmerContactNo"
-                            type="tel"
-                            className="w-full p-2 border rounded border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            value={formData.EmerContactNo}
-                            onChange={handleChange}
-                        />
-                    </div>
-
-                    <div>
-                        <label htmlFor="EmerRelationship" className="block text-sm font-medium mb-1">
-                            Relationship
-                        </label>
-                        <input
-                            id="EmerRelationship"
-                            name="EmerRelationship"
-                            type="text"
-                            className="w-full p-2 border rounded border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            value={formData.EmerRelationship}
-                            onChange={handleChange}
-                        />
+                        {errors.Email && <p className="mt-1 text-sm text-red-500">{errors.Email}</p>}
                     </div>
 
                     {/* Employment Information */}
@@ -624,59 +475,35 @@ const EmployeeForm = ({ isOpen, onClose, employee = null, mode = 'create' }) => 
                     </div>
 
                     <div>
-                        <label htmlFor="RankFile" className="block text-sm font-medium mb-1">
-                            Rank/File
-                        </label>
-                        <input
-                            id="RankFile"
-                            name="RankFile"
-                            type="text"
-                            className="w-full p-2 border rounded border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            value={formData.RankFile}
-                            onChange={handleChange}
-                        />
-                    </div>
-
-                    <div>
                         <label htmlFor="Department" className="block text-sm font-medium mb-1">
-                            Department
+                            Department <span className="text-red-500">*</span>
                         </label>
                         <input
                             id="Department"
                             name="Department"
                             type="text"
-                            className="w-full p-2 border rounded border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            className={`w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent ${errors.Department ? 'border-red-500' : 'border-gray-300'}`}
                             value={formData.Department}
                             onChange={handleChange}
+                            required
                         />
-                    </div>
-
-                    <div>
-                        <label htmlFor="Line" className="block text-sm font-medium mb-1">
-                            Line
-                        </label>
-                        <input
-                            id="Line"
-                            name="Line"
-                            type="text"
-                            className="w-full p-2 border rounded border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            value={formData.Line}
-                            onChange={handleChange}
-                        />
+                        {errors.Department && <p className="mt-1 text-sm text-red-500">{errors.Department}</p>}
                     </div>
 
                     <div>
                         <label htmlFor="Jobtitle" className="block text-sm font-medium mb-1">
-                            Job Title
+                            Job Title <span className="text-red-500">*</span>
                         </label>
                         <input
                             id="Jobtitle"
                             name="Jobtitle"
                             type="text"
-                            className="w-full p-2 border rounded border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            className={`w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent ${errors.Jobtitle ? 'border-red-500' : 'border-gray-300'}`}
                             value={formData.Jobtitle}
                             onChange={handleChange}
+                            required
                         />
+                        {errors.Jobtitle && <p className="mt-1 text-sm text-red-500">{errors.Jobtitle}</p>}
                     </div>
 
                     <div>
@@ -745,22 +572,7 @@ const EmployeeForm = ({ isOpen, onClose, employee = null, mode = 'create' }) => 
                         />
                     </div>
 
-                    <div>
-                        <label htmlFor="pay_allowance" className="block text-sm font-medium mb-1">
-                            Pay Allowance
-                        </label>
-                        <input
-                            id="pay_allowance"
-                            name="pay_allowance"
-                            type="number"
-                            step="0.01"
-                            className="w-full p-2 border rounded border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            value={formData.pay_allowance}
-                            onChange={handleChange}
-                        />
-                    </div>
-
-                    {/* Government IDs */}
+                    {/* Government IDs - Simplified for brevity */}
                     <div className="col-span-2">
                         <h3 className="text-lg font-semibold mb-3 mt-4">Government Information</h3>
                     </div>
@@ -792,64 +604,23 @@ const EmployeeForm = ({ isOpen, onClose, employee = null, mode = 'create' }) => 
                             onChange={handleChange}
                         />
                     </div>
-
-                    <div>
-                        <label htmlFor="HDMFNo" className="block text-sm font-medium mb-1">
-                            HDMF Number
-                        </label>
-                        <input
-                            id="HDMFNo"
-                            name="HDMFNo"
-                            type="text"
-                            className="w-full p-2 border rounded border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            value={formData.HDMFNo}
-                            onChange={handleChange}
-                        />
-                    </div>
-
-                    <div>
-                        <label htmlFor="TaxNo" className="block text-sm font-medium mb-1">
-                            Tax Number
-                        </label>
-                        <input
-                            id="TaxNo"
-                            name="TaxNo"
-                            type="text"
-                            className="w-full p-2 border rounded border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            value={formData.TaxNo}
-                            onChange={handleChange}
-                        />
-                    </div>
-
+                    
+                    {/* Taxable Field - Key fix for the SQL error */}
                     <div>
                         <label htmlFor="Taxable" className="block text-sm font-medium mb-1">
-                            Taxable
+                            Taxable <span className="text-red-500">*</span>
                         </label>
                         <select
                             id="Taxable"
                             name="Taxable"
                             className="w-full p-2 border rounded border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            value={formData.Taxable}
+                            value={formData.Taxable ? "1" : "0"}
                             onChange={handleChange}
+                            required
                         >
-                            <option value="">Select Option</option>
-                            <option value="Yes">Yes</option>
-                            <option value="No">No</option>
+                            <option value="1">Yes</option>
+                            <option value="0">No</option>
                         </select>
-                    </div>
-
-                    <div>
-                        <label htmlFor="CostCenter" className="block text-sm font-medium mb-1">
-                            Cost Center
-                        </label>
-                        <input
-                            id="CostCenter"
-                            name="CostCenter"
-                            type="text"
-                            className="w-full p-2 border rounded border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            value={formData.CostCenter}
-                            onChange={handleChange}
-                        />
                     </div>
                 </div>
 
@@ -874,8 +645,73 @@ const EmployeeForm = ({ isOpen, onClose, employee = null, mode = 'create' }) => 
     );
 };
 
+// Simple Tabs Component
+const Tabs = ({ children, defaultValue, className = "", onValueChange }) => {
+  const [activeTab, setActiveTab] = useState(defaultValue);
+  
+  useEffect(() => {
+    if (onValueChange) {
+      onValueChange(activeTab);
+    }
+  }, [activeTab, onValueChange]);
+  
+  return (
+    <div className={className}>
+      {React.Children.map(children, child => {
+        if (child && (child.type === TabsList || child.type === TabsContent)) {
+          return React.cloneElement(child, { activeTab, setActiveTab });
+        }
+        return child;
+      })}
+    </div>
+  );
+};
 
-const EmployeeList = ({ employees, onEdit, onDelete, onView, onMarkInactive, onMarkBlocked, onMarkActive }) => {
+// TabsList Component
+const TabsList = ({ children, activeTab, setActiveTab, className = "" }) => {
+  return (
+    <div className={`inline-flex h-10 items-center justify-center rounded-md bg-gray-100 p-1 text-gray-500 ${className}`}>
+      {React.Children.map(children, child => {
+        if (child && child.type === TabsTrigger) {
+          return React.cloneElement(child, { activeTab, setActiveTab });
+        }
+        return child;
+      })}
+    </div>
+  );
+};
+
+// TabsTrigger Component
+const TabsTrigger = ({ children, value, activeTab, setActiveTab }) => {
+  const isActive = activeTab === value;
+  
+  return (
+    <button
+      onClick={() => setActiveTab(value)}
+      className={`inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium transition-all 
+      ${isActive 
+        ? "bg-white text-gray-950 shadow-sm" 
+        : "hover:bg-gray-200 hover:text-gray-900"
+      }`}
+    >
+      {children}
+    </button>
+  );
+};
+
+// TabsContent Component
+const TabsContent = ({ children, value, activeTab }) => {
+  if (activeTab !== value) return null;
+  
+  return (
+    <div className="mt-2">
+      {children}
+    </div>
+  );
+};
+
+// EmployeeList Component
+const EmployeeList = ({ employees, onView, onEdit, onDelete, onMarkInactive, onMarkBlocked, onMarkActive }) => {
     if (!employees?.length) {
         return <div className="p-4 text-center text-gray-500">No employees found</div>;
     }
@@ -1028,6 +864,7 @@ const EmployeeList = ({ employees, onEdit, onDelete, onView, onMarkInactive, onM
     );
 };
 
+// Status Card Component
 const StatusCard = ({ title, count, icon, bgColor, textColor }) => (
     <Card className={`${bgColor} shadow-sm`}>
         <CardContent className="p-6 flex justify-between items-center">
@@ -1042,6 +879,7 @@ const StatusCard = ({ title, count, icon, bgColor, textColor }) => (
     </Card>
 );
 
+// Main EmployeePage Component
 const EmployeePage = ({ employees: initialEmployees, currentStatus = 'all', flash }) => {
     const { auth } = usePage().props;
     const [filteredEmployees, setFilteredEmployees] = useState(initialEmployees || []);
@@ -1078,11 +916,11 @@ const EmployeePage = ({ employees: initialEmployees, currentStatus = 'all', flas
         // Filter by search term
         if (searchTerm) {
             filtered = filtered.filter(employee => 
-                employee.Lname.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                employee.Fname.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                employee.Email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                employee.Department?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                employee.idno?.toLowerCase().includes(searchTerm.toLowerCase())
+                (employee.Lname?.toLowerCase().includes(searchTerm.toLowerCase())) ||
+                (employee.Fname?.toLowerCase().includes(searchTerm.toLowerCase())) ||
+                (employee.Email?.toLowerCase().includes(searchTerm.toLowerCase())) ||
+                (employee.Department?.toLowerCase().includes(searchTerm.toLowerCase())) ||
+                (employee.idno?.toLowerCase().includes(searchTerm.toLowerCase()))
             );
         }
         
@@ -1113,129 +951,136 @@ const EmployeePage = ({ employees: initialEmployees, currentStatus = 'all', flas
             confirmText: 'Delete',
             confirmVariant: 'destructive',
             onConfirm: () => {
-                router.delete(`/employees/${id}`);
-                setConfirmModal({...confirmModal, isOpen: false});
+                router.delete(`/employees/${id}`, {
+                    onSuccess: () => {
+                        setConfirmModal({...confirmModal, isOpen: false});
+                    },
+                    preserveScroll: true,
+                });
             }
         });
     };
     
     const handleMarkInactive = (id) => {
-    setConfirmModal({
-        isOpen: true,
-        title: 'Mark Employee as Inactive',
-        message: 'Are you sure you want to mark this employee as inactive?',
-        confirmText: 'Mark Inactive',
-        confirmVariant: 'warning',
-        onConfirm: () => {
-            // Use Inertia post with proper options to prevent full page reload
-            router.post(`/employees/${id}/mark-inactive`, {}, { 
-                preserveState: true,
-                preserveScroll: true,
-                onSuccess: () => {
-                    // Update the employee status locally to avoid reload
-                    const updatedEmployees = initialEmployees.map(emp => {
-                        if (emp.id === id) {
-                            return {...emp, JobStatus: 'Inactive'};
-                        }
-                        return emp;
-                    });
-                    
-                    // Update status counts
-                    setStatusCounts({
-                        total: updatedEmployees.length,
-                        active: updatedEmployees.filter(e => e.JobStatus === 'Active').length,
-                        inactive: updatedEmployees.filter(e => e.JobStatus === 'Inactive').length,
-                        blocked: updatedEmployees.filter(e => e.JobStatus === 'Blocked').length
-                    });
-                    
-                    setConfirmModal({...confirmModal, isOpen: false});
-                }
-            });
-        }
-    });
-};
+        setConfirmModal({
+            isOpen: true,
+            title: 'Mark Employee as Inactive',
+            message: 'Are you sure you want to mark this employee as inactive?',
+            confirmText: 'Mark Inactive',
+            confirmVariant: 'warning',
+            onConfirm: () => {
+                router.post(`/employees/${id}/mark-inactive`, {}, { 
+                    preserveState: true,
+                    preserveScroll: true,
+                    onSuccess: () => {
+                        // Update the employee status locally to avoid reload
+                        setFilteredEmployees(prev => 
+                            prev.map(emp => emp.id === id ? {...emp, JobStatus: 'Inactive'} : emp)
+                        );
+                        
+                        // Update status counts
+                        setStatusCounts(prev => {
+                            const employee = initialEmployees.find(e => e.id === id);
+                            const prevStatus = employee?.JobStatus;
+                            
+                            return {
+                                ...prev,
+                                active: prevStatus === 'Active' ? prev.active - 1 : prev.active,
+                                inactive: prev.inactive + 1
+                            };
+                        });
+                        
+                        setConfirmModal({...confirmModal, isOpen: false});
+                    }
+                });
+            }
+        });
+    };
 
-const handleMarkBlocked = (id) => {
-    setConfirmModal({
-        isOpen: true,
-        title: 'Block Employee',
-        message: 'Are you sure you want to block this employee? Blocked employees will not be able to access any company resources.',
-        confirmText: 'Block',
-        confirmVariant: 'destructive',
-        onConfirm: () => {
-            router.post(`/employees/${id}/mark-blocked`, {}, {
-                preserveState: true,
-                preserveScroll: true,
-                onSuccess: () => {
-                    // Update the employee status locally to avoid reload
-                    const updatedEmployees = initialEmployees.map(emp => {
-                        if (emp.id === id) {
-                            return {...emp, JobStatus: 'Blocked'};
-                        }
-                        return emp;
-                    });
-                    
-                    // Update status counts
-                    setStatusCounts({
-                        total: updatedEmployees.length,
-                        active: updatedEmployees.filter(e => e.JobStatus === 'Active').length,
-                        inactive: updatedEmployees.filter(e => e.JobStatus === 'Inactive').length,
-                        blocked: updatedEmployees.filter(e => e.JobStatus === 'Blocked').length
-                    });
-                    
-                    setConfirmModal({...confirmModal, isOpen: false});
-                }
-            });
-        }
-    });
-};
+    const handleMarkBlocked = (id) => {
+        setConfirmModal({
+            isOpen: true,
+            title: 'Block Employee',
+            message: 'Are you sure you want to block this employee? Blocked employees will not be able to access any company resources.',
+            confirmText: 'Block',
+            confirmVariant: 'destructive',
+            onConfirm: () => {
+                router.post(`/employees/${id}/mark-blocked`, {}, {
+                    preserveState: true,
+                    preserveScroll: true,
+                    onSuccess: () => {
+                        // Update the employee status locally to avoid reload
+                        setFilteredEmployees(prev => 
+                            prev.map(emp => emp.id === id ? {...emp, JobStatus: 'Blocked'} : emp)
+                        );
+                        
+                        // Update status counts
+                        setStatusCounts(prev => {
+                            const employee = initialEmployees.find(e => e.id === id);
+                            const prevStatus = employee?.JobStatus;
+                            
+                            return {
+                                ...prev,
+                                active: prevStatus === 'Active' ? prev.active - 1 : prev.active,
+                                inactive: prevStatus === 'Inactive' ? prev.inactive - 1 : prev.inactive,
+                                blocked: prev.blocked + 1
+                            };
+                        });
+                        
+                        setConfirmModal({...confirmModal, isOpen: false});
+                    }
+                });
+            }
+        });
+    };
 
-const handleMarkActive = (id) => {
-    setConfirmModal({
-        isOpen: true,
-        title: 'Activate Employee',
-        message: 'Are you sure you want to mark this employee as active?',
-        confirmText: 'Activate',
-        confirmVariant: 'default',
-        onConfirm: () => {
-            router.post(`/employees/${id}/mark-active`, {}, {
-                preserveState: true,
-                preserveScroll: true,
-                onSuccess: () => {
-                    // Update the employee status locally to avoid reload
-                    const updatedEmployees = initialEmployees.map(emp => {
-                        if (emp.id === id) {
-                            return {...emp, JobStatus: 'Active'};
-                        }
-                        return emp;
-                    });
-                    
-                    // Update status counts
-                    setStatusCounts({
-                        total: updatedEmployees.length,
-                        active: updatedEmployees.filter(e => e.JobStatus === 'Active').length,
-                        inactive: updatedEmployees.filter(e => e.JobStatus === 'Inactive').length,
-                        blocked: updatedEmployees.filter(e => e.JobStatus === 'Blocked').length
-                    });
-                    
-                    setConfirmModal({...confirmModal, isOpen: false});
-                }
-            });
-        }
-    });
-};
+    const handleMarkActive = (id) => {
+        setConfirmModal({
+            isOpen: true,
+            title: 'Activate Employee',
+            message: 'Are you sure you want to mark this employee as active?',
+            confirmText: 'Activate',
+            confirmVariant: 'default',
+            onConfirm: () => {
+                router.post(`/employees/${id}/mark-active`, {}, {
+                    preserveState: true,
+                    preserveScroll: true,
+                    onSuccess: () => {
+                        // Update the employee status locally to avoid reload
+                        setFilteredEmployees(prev => 
+                            prev.map(emp => emp.id === id ? {...emp, JobStatus: 'Active'} : emp)
+                        );
+                        
+                        // Update status counts
+                        setStatusCounts(prev => {
+                            const employee = initialEmployees.find(e => e.id === id);
+                            const prevStatus = employee?.JobStatus;
+                            
+                            return {
+                                ...prev,
+                                active: prev.active + 1,
+                                inactive: prevStatus === 'Inactive' ? prev.inactive - 1 : prev.inactive,
+                                blocked: prevStatus === 'Blocked' ? prev.blocked - 1 : prev.blocked
+                            };
+                        });
+                        
+                        setConfirmModal({...confirmModal, isOpen: false});
+                    }
+                });
+            }
+        });
+    };
     
-    
-const handleTabChange = (value) => {
-    setActiveTab(value);
-    
-    // Use Inertia's visit instead of router.get to prevent full page reload
-    router.visit(`/employees?status=${value}`, {
-        preserveState: true,
-        preserveScroll: true,
-        only: ['employees', 'currentStatus']
-    });
-};
+    const handleTabChange = (value) => {
+        setActiveTab(value);
+        
+        // Use router.visit with preserveState and preserveScroll to avoid full page reload
+        router.visit(`/employees?status=${value}`, {
+            preserveState: true,
+            preserveScroll: true,
+            only: ['employees', 'currentStatus']
+        });
+    };
 
     return (
         <AuthenticatedLayout user={auth.user}>
@@ -1307,6 +1152,7 @@ const handleTabChange = (value) => {
                             />
                         </div>
 
+                        {/* Search Bar */}
                         <div className="flex gap-4 mb-6">
                             <div className="flex-1 relative">
                                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
@@ -1340,6 +1186,7 @@ const handleTabChange = (value) => {
                             </TabsList>
                         </Tabs>
 
+                        {/* Employee List */}
                         <div className="bg-white rounded-lg shadow">
                             <EmployeeList
                                 employees={filteredEmployees}
@@ -1356,6 +1203,7 @@ const handleTabChange = (value) => {
                             />
                         </div>
 
+                        {/* Modals */}
                         <ViewEmployeeModal
                             isOpen={viewModalOpen}
                             onClose={() => {

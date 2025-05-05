@@ -316,9 +316,6 @@ public function bulkUpdateStatus(Request $request)
         return false;
     }
 
-    /**
-     * Store a newly created overtime request.
-     */
     public function store(Request $request)
     {
         $validated = $request->validate([
@@ -331,17 +328,6 @@ public function bulkUpdateStatus(Request $request)
             'rate_multiplier' => 'required|numeric',
         ]);
         
-        // Calculate total hours
-        $startTime = Carbon::parse($validated['date'] . ' ' . $validated['start_time']);
-        $endTime = Carbon::parse($validated['date'] . ' ' . $validated['end_time']);
-        
-        // Handle case where end time is on the next day
-        if ($endTime->lt($startTime)) {
-            $endTime->addDay();
-        }
-        
-        $totalHours = $endTime->diffInMinutes($startTime) / 60;
-        
         // Get the current authenticated user
         $user = Auth::user();
         
@@ -349,9 +335,9 @@ public function bulkUpdateStatus(Request $request)
         $userRoles = $this->getUserRoles($user);
         $isDepartmentManager = $userRoles['isDepartmentManager'];
         
-        // Find the appropriate department manager for each employee
         $successCount = 0;
-        $failCount = 0;
+        $skippedCount = 0;
+        $errorMessages = [];
         
         DB::beginTransaction();
         
@@ -360,6 +346,18 @@ public function bulkUpdateStatus(Request $request)
                 $employee = Employee::find($employeeId);
                 
                 if (!$employee) {
+                    $errorMessages[] = "Employee ID $employeeId not found";
+                    continue;
+                }
+                
+                // Check for duplicate overtime entries (same employee and date)
+                $existingOvertime = Overtime::where('employee_id', $employeeId)
+                                           ->where('date', $validated['date'])
+                                           ->first();
+                
+                if ($existingOvertime) {
+                    $skippedCount++;
+                    $errorMessages[] = "Overtime for {$employee->Fname} {$employee->Lname} on {$validated['date']} already exists";
                     continue;
                 }
                 
@@ -367,13 +365,32 @@ public function bulkUpdateStatus(Request $request)
                 $deptManager = DepartmentManager::where('department', $employee->Department)
                     ->first();
                 
+                // Calculate total hours with consideration for midnight crossing
+                $startTime = Carbon::parse($validated['date'] . ' ' . $validated['start_time']);
+                $endTime = Carbon::parse($validated['date'] . ' ' . $validated['end_time']);
+                
+                // Handle case where end time is on the next day
+                if ($endTime->lt($startTime)) {
+                    $endTime->addDay();
+                }
+                
+                $totalHours = $endTime->diffInMinutes($startTime) / 60;
+                
+                // Calculate rate multiplier based on day type and night differential
+                $rateMultiplier = $this->calculateRateMultiplier(
+                    $validated['date'],
+                    $startTime,
+                    $endTime,
+                    $validated['rate_multiplier']
+                );
+                
                 $overtime = new Overtime();
                 $overtime->employee_id = $employeeId;
                 $overtime->date = $validated['date'];
                 $overtime->start_time = $startTime;
                 $overtime->end_time = $endTime;
                 $overtime->total_hours = $totalHours;
-                $overtime->rate_multiplier = $validated['rate_multiplier'];
+                $overtime->rate_multiplier = $rateMultiplier;
                 $overtime->reason = $validated['reason'];
                 
                 // Set initial status based on conditions
@@ -382,8 +399,8 @@ public function bulkUpdateStatus(Request $request)
                     // Check if the employee is the department manager themselves
                     ($employeeId == $user->employee_id || 
                      ($employee->Department && DepartmentManager::where('manager_id', $user->id)
-                                                         ->where('department', $employee->Department)
-                                                         ->exists()))) {
+                                                        ->where('department', $employee->Department)
+                                                        ->exists()))) {
                     
                     // Auto-approve at department manager level
                     $overtime->status = 'manager_approved';
@@ -408,12 +425,319 @@ public function bulkUpdateStatus(Request $request)
             
             DB::commit();
             
-            return redirect()->back()->with('message', "Successfully created {$successCount} overtime request(s)");
+            $message = "Successfully created {$successCount} overtime request(s)";
+            if ($skippedCount > 0) {
+                $message .= ". Skipped {$skippedCount} duplicate entries.";
+            }
+            
+            if (!empty($errorMessages)) {
+                return redirect()->back()->with([
+                    'message' => $message,
+                    'errors' => $errorMessages
+                ]);
+            }
+            
+            return redirect()->back()->with('message', $message);
         } catch (\Exception $e) {
             DB::rollBack();
             return redirect()->back()->with('error', 'Error creating overtime requests: ' . $e->getMessage());
         }
     }
+
+    private function calculateRateMultiplier($date, $startTime, $endTime, $baseMultiplier)
+    {
+        // Check if this is a holiday
+        $isHoliday = $this->isHoliday($date);
+        
+        // Check if this is a rest day (typically weekend)
+        $isRestDay = $this->isRestDay($date);
+        
+        // Check for night differential (10pm to 6am)
+        $hasNightDifferential = $this->hasNightDifferential($startTime, $endTime);
+        
+        // If the user already selected a specific multiplier, respect their choice
+        // This allows manual override by HR/managers when needed
+        if ($baseMultiplier != 1.25) {
+            return $baseMultiplier;
+        }
+        
+        // Otherwise, calculate the appropriate multiplier based on conditions
+        if ($isHoliday) {
+            // Regular holiday rates
+            if ($hasNightDifferential) {
+                return 2.86; // Regular Holiday Overtime + Night Differential
+            } else {
+                return 2.60; // Regular Holiday Overtime
+            }
+        } else if ($isRestDay) {
+            // Rest day rates
+            if ($hasNightDifferential) {
+                return 1.859; // Rest Day Overtime + Night Differential
+            } else {
+                return 1.69; // Rest Day Overtime
+            }
+        } else {
+            // Regular weekday rates
+            if ($hasNightDifferential) {
+                return 1.375; // Ordinary Weekday Overtime + Night Differential
+            } else {
+                return 1.25; // Ordinary Weekday Overtime
+            }
+        }
+    }
+    
+    /**
+     * Check if the given date is a holiday
+     * 
+     * @param string $date The date to check
+     * @return bool True if the date is a holiday
+     */
+    private function isHoliday($date)
+    {
+        // This method should be implemented based on your holiday calendar
+        // For now, we'll use a simple example with hardcoded holidays
+        $holidays = [
+            '2025-01-01', // New Year's Day
+            '2025-04-09', // Araw ng Kagitingan
+            '2025-04-18', // Good Friday
+            '2025-05-01', // Labor Day
+            '2025-06-12', // Independence Day
+            '2025-08-25', // National Heroes Day
+            '2025-11-30', // Bonifacio Day
+            '2025-12-25', // Christmas Day
+            '2025-12-30', // Rizal Day
+            // Add more holidays as needed
+        ];
+        
+        return in_array($date, $holidays);
+    }
+    
+    /**
+     * Check if the given date is a rest day (weekend)
+     * 
+     * @param string $date The date to check
+     * @return bool True if the date is a rest day
+     */
+    private function isRestDay($date)
+    {
+        $dayOfWeek = Carbon::parse($date)->dayOfWeek;
+        
+        // Assuming Saturday (6) and Sunday (0) are rest days
+        return $dayOfWeek === 0 || $dayOfWeek === 6;
+    }
+    
+    /**
+     * Check if the given time period overlaps with night differential hours (10pm to 6am)
+     * 
+     * @param Carbon $startTime The start time
+     * @param Carbon $endTime The end time
+     * @return bool True if there is overlap with night differential hours
+     */
+    private function hasNightDifferential($startTime, $endTime)
+    {
+        // Create night differential period for the start date
+        $nightStart = $startTime->copy()->startOfDay()->addHours(22); // 10pm
+        $nightEnd = $startTime->copy()->startOfDay()->addDay()->addHours(6); // 6am next day
+        
+        // Create night differential period for the day before (to catch overnight shifts)
+        $prevNightStart = $nightStart->copy()->subDay();
+        $prevNightEnd = $nightEnd->copy()->subDay();
+        
+        // Check if work period overlaps with either night period
+        $overlapsCurrentNight = ($startTime->lt($nightEnd) && $endTime->gt($nightStart));
+        $overlapsPrevNight = ($startTime->lt($prevNightEnd) && $endTime->gt($prevNightStart));
+        
+        return $overlapsCurrentNight || $overlapsPrevNight;
+    }
+    
+    /**
+     * Calculate the proportion of hours that fall within night differential period
+     * 
+     * @param Carbon $startTime The start time
+     * @param Carbon $endTime The end time
+     * @return float The number of hours within night differential
+     */
+    private function calculateNightDifferentialHours($startTime, $endTime)
+    {
+        // Night differential hours (10pm to 6am)
+        $nightHours = 0;
+        
+        // Current day's night period
+        $nightStartToday = $startTime->copy()->startOfDay()->addHours(22); // 10pm
+        $nightEndToday = $startTime->copy()->startOfDay()->addDay()->addHours(6); // 6am next day
+        
+        // Previous day's night period
+        $nightStartYesterday = $nightStartToday->copy()->subDay();
+        $nightEndYesterday = $nightEndToday->copy()->subDay();
+        
+        // Check overlap with current day's night period
+        if ($startTime->lt($nightEndToday) && $endTime->gt($nightStartToday)) {
+            $overlapStart = max($startTime->timestamp, $nightStartToday->timestamp);
+            $overlapEnd = min($endTime->timestamp, $nightEndToday->timestamp);
+            $nightHours += ($overlapEnd - $overlapStart) / 3600; // Convert seconds to hours
+        }
+        
+        // Check overlap with previous day's night period
+        if ($startTime->lt($nightEndYesterday) && $endTime->gt($nightStartYesterday)) {
+            $overlapStart = max($startTime->timestamp, $nightStartYesterday->timestamp);
+            $overlapEnd = min($endTime->timestamp, $nightEndYesterday->timestamp);
+            $nightHours += ($overlapEnd - $overlapStart) / 3600; // Convert seconds to hours
+        }
+        
+        return $nightHours;
+    }
+    
+    /**
+     * Calculate the proportion of hours that fall within holiday period
+     * For a shift that crosses midnight and the next day is not a holiday
+     * 
+     * @param string $date The holiday date
+     * @param Carbon $startTime The start time
+     * @param Carbon $endTime The end time
+     * @return array ['holidayHours' => float, 'regularHours' => float]
+     */
+    private function calculateSplitHolidayHours($date, $startTime, $endTime)
+    {
+        $midnight = Carbon::parse($date . ' 23:59:59');
+        $nextDay = Carbon::parse($date)->addDay()->startOfDay();
+        
+        // Check if shift crosses midnight
+        if ($startTime->lt($midnight) && $endTime->gt($nextDay)) {
+            // Calculate hours before midnight (holiday hours)
+            $holidayHours = $midnight->diffInSeconds($startTime) / 3600;
+            
+            // Calculate hours after midnight (regular hours)
+            $regularHours = $endTime->diffInSeconds($nextDay) / 3600;
+            
+            return [
+                'holidayHours' => $holidayHours,
+                'regularHours' => $regularHours
+            ];
+        }
+        
+        // If shift doesn't cross midnight or is entirely within the holiday
+        return [
+            'holidayHours' => $endTime->diffInSeconds($startTime) / 3600,
+            'regularHours' => 0
+        ];
+    }
+
+    /**
+ * Generate an explanation of the overtime rate calculation
+ * 
+ * @param Request $request
+ * @return \Illuminate\Http\JsonResponse
+ */
+public function explainRateCalculation(Request $request)
+{
+    $validated = $request->validate([
+        'date' => 'required|date',
+        'start_time' => 'required',
+        'end_time' => 'required',
+    ]);
+    
+    // Parse times
+    $startTime = Carbon::parse($validated['date'] . ' ' . $validated['start_time']);
+    $endTime = Carbon::parse($validated['date'] . ' ' . $validated['end_time']);
+    
+    // Handle case where end time is on the next day
+    if ($endTime->lt($startTime)) {
+        $endTime->addDay();
+    }
+    
+    // Get total hours
+    $totalHours = $endTime->diffInMinutes($startTime) / 60;
+    
+    // Check conditions
+    $isHoliday = $this->isHoliday($validated['date']);
+    $isRestDay = $this->isRestDay($validated['date']);
+    $hasNightDiff = $this->hasNightDifferential($startTime, $endTime);
+    $nightDiffHours = $this->calculateNightDifferentialHours($startTime, $endTime);
+    
+    // Check if shift crosses midnight and the next day has a different type
+    $nextDate = Carbon::parse($validated['date'])->addDay()->toDateString();
+    $isNextDayHoliday = $this->isHoliday($nextDate);
+    $isNextDayRestDay = $this->isRestDay($nextDate);
+    $splitHours = null;
+    
+    if ($endTime->gt($startTime->copy()->startOfDay()->addDay())) {
+        // Shift crosses midnight
+        $splitHours = $this->calculateSplitHolidayHours($validated['date'], $startTime, $endTime);
+    }
+    
+    // Calculate the appropriate rate multiplier
+    $baseMultiplier = 1.25; // Ordinary Weekday Overtime
+    $calculatedMultiplier = $this->calculateRateMultiplier(
+        $validated['date'],
+        $startTime,
+        $endTime,
+        $baseMultiplier
+    );
+    
+    // Build explanation
+    $explanation = [
+        'date' => $validated['date'],
+        'startTime' => $startTime->format('h:i A'),
+        'endTime' => $endTime->format('h:i A'),
+        'totalHours' => number_format($totalHours, 2),
+        'isHoliday' => $isHoliday,
+        'isRestDay' => $isRestDay,
+        'hasNightDifferential' => $hasNightDiff,
+        'nightDifferentialHours' => number_format($nightDiffHours, 2),
+        'crossesMidnight' => $endTime->day !== $startTime->day,
+        'splitHours' => $splitHours,
+        'rateMultiplier' => $calculatedMultiplier,
+        'explanation' => $this->generateRateExplanation(
+            $isHoliday, 
+            $isRestDay, 
+            $hasNightDiff,
+            $splitHours, 
+            $isNextDayHoliday, 
+            $isNextDayRestDay
+        )
+    ];
+    
+    return response()->json($explanation);
+}
+
+/**
+ * Generate a human-readable explanation of the rate calculation
+ */
+private function generateRateExplanation($isHoliday, $isRestDay, $hasNightDiff, $splitHours, $isNextDayHoliday, $isNextDayRestDay)
+{
+    $explanation = [];
+    
+    if ($isHoliday) {
+        $explanation[] = "This date is a holiday, which has a base rate of 200%.";
+        $explanation[] = "Overtime on a holiday receives an additional 30% premium, resulting in a 260% rate.";
+    } else if ($isRestDay) {
+        $explanation[] = "This date is a rest day, which has a base rate of 130%.";
+        $explanation[] = "Overtime on a rest day receives an additional 30% premium, resulting in a 169% rate.";
+    } else {
+        $explanation[] = "This is a regular working day with a standard overtime rate of 125%.";
+    }
+    
+    if ($hasNightDiff) {
+        $explanation[] = "Part of this overtime falls within night differential hours (10PM to 6AM), which adds 10% to the rate.";
+    }
+    
+    // Explain split calculation if applicable
+    if ($splitHours && $splitHours['regularHours'] > 0) {
+        $explanation[] = "This overtime crosses midnight, with {$splitHours['holidayHours']} hours on the first day and {$splitHours['regularHours']} hours on the second day.";
+        
+        if ($isHoliday && !$isNextDayHoliday) {
+            $explanation[] = "The first part uses holiday rates (260%), while the second part uses regular rates (125%).";
+        } else if (!$isHoliday && $isNextDayHoliday) {
+            $explanation[] = "The first part uses regular rates (125%), while the second part uses holiday rates (260%).";
+        } else if ($isRestDay && !$isNextDayRestDay) {
+            $explanation[] = "The first part uses rest day rates (169%), while the second part uses regular rates (125%).";
+        } else if (!$isRestDay && $isNextDayRestDay) {
+            $explanation[] = "The first part uses regular rates (125%), while the second part uses rest day rates (169%).";
+        }
+    }
+    
+    return $explanation;
+}
 
 
     private function isDepartmentManagerFor($user, $overtime)
@@ -807,5 +1131,54 @@ private function getFilteredOvertimes($user)
     $overtimesQuery->orderBy('created_at', 'desc');
     
     return $overtimesQuery->get();
+}
+
+/**
+ * Remove the specified overtime request.
+ */
+public function destroy(Overtime $overtime)
+{
+    // Check if the user is authorized to delete this overtime
+    $user = Auth::user();
+    
+    // Only allow deletion if:
+    // 1. User is a superadmin
+    // 2. User created this overtime
+    // 3. User is the department manager responsible for this overtime and it's still pending
+    if (!$this->isSuperAdmin($user) && 
+        $overtime->created_by !== $user->id && 
+        !($this->isDepartmentManagerFor($user, $overtime) && $overtime->status === 'pending')) {
+        
+        return back()->with('error', 'You are not authorized to delete this overtime request');
+    }
+    
+    // Can only delete if status is pending
+    if ($overtime->status !== 'pending') {
+        return back()->with('error', 'Only pending overtime requests can be deleted');
+    }
+    
+    try {
+        $overtime->delete();
+        
+        \Log::info('Overtime request deleted', [
+            'overtime_id' => $overtime->id,
+            'deleted_by' => $user->name,
+            'user_id' => $user->id
+        ]);
+        
+        // Get updated overtimes list
+        $overtimes = $this->getFilteredOvertimes($user);
+        
+        // Return to the previous page with a success message
+        return back()->with('message', 'Overtime request deleted successfully');
+        
+    } catch (\Exception $e) {
+        \Log::error('Error deleting overtime request', [
+            'overtime_id' => $overtime->id,
+            'error' => $e->getMessage()
+        ]);
+        
+        return back()->with('error', 'Failed to delete overtime request: ' . $e->getMessage());
+    }
 }
 }

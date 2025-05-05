@@ -19,5 +19,5 @@ createInertiaApp({
 
         root.render(<App {...props} />);
     },
-    progress: false, // Disable the progress indicator completely
+    progress: false, 
 });

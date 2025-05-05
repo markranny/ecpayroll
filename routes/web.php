@@ -219,6 +219,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
             ->name('overtimes.destroy');
         Route::get('/overtimes/export', [OvertimeController::class, 'export'])
             ->name('overtimes.export');
+        Route::post('/overtimes/explain-rate', [OvertimeController::class, 'explainRateCalculation'])
+            ->name('overtimes.explain-rate')
+            ->middleware(['auth']);
         
         // Bulk Actions for managers
         Route::middleware('role:department_manager,hrd_manager,superadmin')->group(function () {
