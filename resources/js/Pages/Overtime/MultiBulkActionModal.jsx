@@ -1,6 +1,8 @@
-// Modify resources/js/Pages/Overtime/MultiBulkActionModal.jsx
+// resources/js/Pages/Overtime/MultiBulkActionModal.jsx
+import React, { useState } from 'react';
+import { router } from '@inertiajs/react';
+import { toast } from 'react-toastify';
 
-// First, update the props to include userRoles
 const MultiBulkActionModal = ({ selectedCount, onClose, onSubmit, approvalLevel, userRoles = {} }) => {
     const [status, setStatus] = useState(approvalLevel === 'department' ? 'manager_approved' : 'approved');
     const [remarks, setRemarks] = useState('');
@@ -25,7 +27,29 @@ const MultiBulkActionModal = ({ selectedCount, onClose, onSubmit, approvalLevel,
             approvalLevel
         });
         
-        onSubmit(status, remarks);
+        // Handle the submission
+        try {
+            // Use direct API call instead of relying on parent component's function
+            onSubmit(status, remarks);
+            
+            // Show success toast immediately
+            const actionText = status === 'rejected' 
+                ? 'rejected' 
+                : status === 'force_approved' 
+                    ? 'force approved' 
+                    : approvalLevel === 'department' 
+                        ? 'approved (Dept. Level)' 
+                        : 'approved';
+                
+            toast.success(`Successfully ${actionText} ${selectedCount} overtime request${selectedCount !== 1 ? 's' : ''}`);
+            
+            // Close modal
+            onClose();
+        } catch (error) {
+            console.error('Error in bulk action:', error);
+            toast.error('Failed to process bulk action. Please try again.');
+            setProcessing(false);
+        }
     };
 
     return (

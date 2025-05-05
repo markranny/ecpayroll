@@ -147,6 +147,9 @@ class OvertimeController extends Controller
 /**
  * Bulk update the status of multiple overtime requests.
  */
+/**
+ * Bulk update the status of multiple overtime requests.
+ */
 public function bulkUpdateStatus(Request $request)
 {
     $user = Auth::user();
@@ -155,7 +158,7 @@ public function bulkUpdateStatus(Request $request)
     $validated = $request->validate([
         'overtime_ids' => 'required|array',
         'overtime_ids.*' => 'required|integer|exists:overtimes,id',
-        'status' => 'required|in:manager_approved,approved,rejected',
+        'status' => 'required|in:manager_approved,approved,rejected,force_approved',
         'remarks' => 'nullable|string|max:500',
     ]);
     
@@ -204,6 +207,25 @@ public function bulkUpdateStatus(Request $request)
                     $overtime->hrd_remarks = $validated['remarks'] ?? 'Bulk approved by HRD manager';
                 }
             }
+            // Force approve option for superadmins
+            elseif ($validated['status'] === 'force_approved' && $this->isSuperAdmin($user)) {
+                $canUpdate = true;
+                
+                // If not already approved at department level
+                if (!$overtime->dept_approved_by) {
+                    $overtime->dept_approved_by = $user->id;
+                    $overtime->dept_approved_at = now();
+                    $overtime->dept_remarks = 'Administrative override: ' . ($validated['remarks'] ?? 'Force approved by admin');
+                }
+                
+                // Set HRD approval info
+                $overtime->hrd_approved_by = $user->id;
+                $overtime->hrd_approved_at = now();
+                $overtime->hrd_remarks = 'Administrative override: ' . ($validated['remarks'] ?? 'Force approved by admin');
+                
+                // Set status to regular approved
+                $validated['status'] = 'approved';
+            }
             // Either department manager or HRD manager can reject based on current status
             elseif ($validated['status'] === 'rejected') {
                 if ($currentStatus === 'pending') {
@@ -251,13 +273,16 @@ public function bulkUpdateStatus(Request $request)
         
         DB::commit();
         
-        // Create success message
-        $message = "{$successCount} overtime requests updated successfully.";
-        if ($failCount > 0) {
-            $message .= " {$failCount} updates failed.";
-        }
+        // Return JSON response instead of a redirect with flash message
+        return response()->json([
+            'success' => true,
+            'message' => "{$successCount} overtime requests updated successfully." . 
+                        ($failCount > 0 ? " {$failCount} updates failed." : ""),
+            'successCount' => $successCount,
+            'failCount' => $failCount,
+            'errors' => $errors
+        ]);
         
-        return redirect()->back()->with('message', $message);
     } catch (\Exception $e) {
         DB::rollBack();
         
@@ -266,7 +291,11 @@ public function bulkUpdateStatus(Request $request)
             'trace' => $e->getTraceAsString()
         ]);
         
-        return redirect()->back()->with('error', 'Error updating overtime statuses: ' . $e->getMessage());
+        return response()->json([
+            'success' => false,
+            'message' => 'Error updating overtime statuses: ' . $e->getMessage(),
+            'errors' => [$e->getMessage()]
+        ], 500);
     }
 }
 
@@ -1180,5 +1209,170 @@ public function destroy(Overtime $overtime)
         
         return back()->with('error', 'Failed to delete overtime request: ' . $e->getMessage());
     }
+}
+
+public function export(Request $request)
+{
+    // Validate request parameters if needed
+    $filterStatus = $request->input('status');
+    $searchTerm = $request->input('search');
+    $fromDate = $request->input('from_date');
+    $toDate = $request->input('to_date');
+    
+    // Get user roles
+    $user = Auth::user();
+    $userRoles = $this->getUserRoles($user);
+    
+    // Query overtimes based on user role
+    $overtimesQuery = Overtime::with(['employee', 'creator', 'departmentManager', 'departmentApprover', 'hrdApprover']);
+    
+    // Filter based on user roles
+    if ($userRoles['isEmployee'] && !$userRoles['isDepartmentManager'] && !$userRoles['isHrdManager'] && !$userRoles['isSuperAdmin']) {
+        // Regular employees can only see their own overtime requests
+        $employeeId = $user->employee ? $user->employee->id : null;
+        if ($employeeId) {
+            $overtimesQuery->where('employee_id', $employeeId);
+        } else {
+            // If no employee record linked, show overtimes created by this user
+            $overtimesQuery->where('created_by', $user->id);
+        }
+    } elseif ($userRoles['isDepartmentManager'] && !$userRoles['isSuperAdmin']) {
+        // Department managers can see:
+        // 1. Overtimes they created
+        // 2. Overtimes assigned to them for approval
+        // 3. Overtimes for employees in their department
+        $managedDepartments = DepartmentManager::where('manager_id', $user->id)
+            ->pluck('department')
+            ->toArray();
+            
+        $overtimesQuery->where(function($query) use ($user, $managedDepartments) {
+            $query->where('created_by', $user->id)
+                ->orWhere('dept_manager_id', $user->id)
+                ->orWhereHas('employee', function($q) use ($managedDepartments) {
+                    $q->whereIn('Department', $managedDepartments);
+                });
+        });
+    } elseif ($userRoles['isHrdManager'] && !$userRoles['isSuperAdmin']) {
+        // HRD managers can see all overtime requests
+        // No additional filtering needed
+    }
+    
+    // Apply filters from request
+    if ($filterStatus) {
+        $overtimesQuery->where('status', $filterStatus);
+    }
+    
+    if ($searchTerm) {
+        $overtimesQuery->where(function($query) use ($searchTerm) {
+            $query->whereHas('employee', function($q) use ($searchTerm) {
+                $q->where('Fname', 'like', "%{$searchTerm}%")
+                  ->orWhere('Lname', 'like', "%{$searchTerm}%")
+                  ->orWhere('idno', 'like', "%{$searchTerm}%")
+                  ->orWhere('Department', 'like', "%{$searchTerm}%");
+            })
+            ->orWhere('reason', 'like', "%{$searchTerm}%");
+        });
+    }
+    
+    if ($fromDate) {
+        $overtimesQuery->whereDate('date', '>=', $fromDate);
+    }
+    
+    if ($toDate) {
+        $overtimesQuery->whereDate('date', '<=', $toDate);
+    }
+    
+    // Get overtimes data
+    $overtimes = $overtimesQuery->orderBy('created_at', 'desc')->get();
+    
+    // Create a new Spreadsheet object
+    $spreadsheet = new Spreadsheet();
+    $sheet = $spreadsheet->getActiveSheet();
+    
+    // Set the column headers
+    $sheet->setCellValue('A1', 'ID');
+    $sheet->setCellValue('B1', 'Employee ID');
+    $sheet->setCellValue('C1', 'Employee Name');
+    $sheet->setCellValue('D1', 'Department');
+    $sheet->setCellValue('E1', 'Date');
+    $sheet->setCellValue('F1', 'Start Time');
+    $sheet->setCellValue('G1', 'End Time');
+    $sheet->setCellValue('H1', 'Total Hours');
+    $sheet->setCellValue('I1', 'Rate Multiplier');
+    $sheet->setCellValue('J1', 'Status');
+    $sheet->setCellValue('K1', 'Reason');
+    $sheet->setCellValue('L1', 'Filed By');
+    $sheet->setCellValue('M1', 'Filed Date');
+    $sheet->setCellValue('N1', 'Dept. Manager');
+    $sheet->setCellValue('O1', 'Dept. Approved By');
+    $sheet->setCellValue('P1', 'Dept. Approved Date');
+    $sheet->setCellValue('Q1', 'Dept. Remarks');
+    $sheet->setCellValue('R1', 'HRD Approved By');
+    $sheet->setCellValue('S1', 'HRD Approved Date');
+    $sheet->setCellValue('T1', 'HRD Remarks');
+    
+    // Add style to header row
+    $headerStyle = [
+        'font' => [
+            'bold' => true,
+            'color' => ['rgb' => 'FFFFFF'],
+        ],
+        'fill' => [
+            'fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID,
+            'startColor' => ['rgb' => '4F81BD'],
+        ],
+        'borders' => [
+            'allBorders' => [
+                'borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN,
+            ],
+        ],
+    ];
+    
+    $sheet->getStyle('A1:T1')->applyFromArray($headerStyle);
+    
+    // Add data rows
+    $row = 2;
+    foreach ($overtimes as $overtime) {
+        $sheet->setCellValue('A' . $row, $overtime->id);
+        $sheet->setCellValue('B' . $row, $overtime->employee ? $overtime->employee->idno : '');
+        $sheet->setCellValue('C' . $row, $overtime->employee ? $overtime->employee->Lname . ', ' . $overtime->employee->Fname . ' ' . $overtime->employee->MName : '');
+        $sheet->setCellValue('D' . $row, $overtime->employee ? $overtime->employee->Department : '');
+        $sheet->setCellValue('E' . $row, $overtime->date ? \Carbon\Carbon::parse($overtime->date)->format('Y-m-d') : '');
+        $sheet->setCellValue('F' . $row, $overtime->start_time ? \Carbon\Carbon::parse($overtime->start_time)->format('h:i A') : '');
+        $sheet->setCellValue('G' . $row, $overtime->end_time ? \Carbon\Carbon::parse($overtime->end_time)->format('h:i A') : '');
+        $sheet->setCellValue('H' . $row, $overtime->total_hours);
+        $sheet->setCellValue('I' . $row, $overtime->rate_multiplier);
+        $sheet->setCellValue('J' . $row, $overtime->status);
+        $sheet->setCellValue('K' . $row, $overtime->reason);
+        $sheet->setCellValue('L' . $row, $overtime->creator ? $overtime->creator->name : '');
+        $sheet->setCellValue('M' . $row, $overtime->created_at ? \Carbon\Carbon::parse($overtime->created_at)->format('Y-m-d h:i A') : '');
+        $sheet->setCellValue('N' . $row, $overtime->departmentManager ? $overtime->departmentManager->name : '');
+        $sheet->setCellValue('O' . $row, $overtime->departmentApprover ? $overtime->departmentApprover->name : '');
+        $sheet->setCellValue('P' . $row, $overtime->dept_approved_at ? \Carbon\Carbon::parse($overtime->dept_approved_at)->format('Y-m-d h:i A') : '');
+        $sheet->setCellValue('Q' . $row, $overtime->dept_remarks);
+        $sheet->setCellValue('R' . $row, $overtime->hrdApprover ? $overtime->hrdApprover->name : '');
+        $sheet->setCellValue('S' . $row, $overtime->hrd_approved_at ? \Carbon\Carbon::parse($overtime->hrd_approved_at)->format('Y-m-d h:i A') : '');
+        $sheet->setCellValue('T' . $row, $overtime->hrd_remarks);
+        
+        $row++;
+    }
+    
+    // Auto-size columns
+    foreach (range('A', 'T') as $column) {
+        $sheet->getColumnDimension($column)->setAutoSize(true);
+    }
+    
+    // Create writer and set headers for download
+    $writer = new Xlsx($spreadsheet);
+    $filename = 'Overtime_Report_' . date('Y-m-d_H-i-s') . '.xlsx';
+    
+    // Save to temporary file
+    $tempFile = tempnam(sys_get_temp_dir(), 'overtime_export_');
+    $writer->save($tempFile);
+    
+    // Return response
+    return response()->download($tempFile, $filename, [
+        'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    ])->deleteFileAfterSend(true);
 }
 }

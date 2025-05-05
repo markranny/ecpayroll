@@ -1,4 +1,4 @@
-// resources/js/Pages/Overtime/OvertimeList.jsx
+
 import React, { useState, useEffect, useRef } from 'react';
 import { format } from 'date-fns';
 import { Download, Search, X, Filter } from 'lucide-react';
@@ -6,6 +6,8 @@ import OvertimeStatusBadge from './OvertimeStatusBadge';
 import OvertimeDetailModal from './OvertimeDetailModal';
 import MultiBulkActionModal from './MultiBulkActionModal';
 import ForceApproveButton from './ForceApproveButton';
+import { router } from '@inertiajs/react';
+import { toast } from 'react-toastify';
 
 const OvertimeList = ({ 
     overtimes, 
@@ -35,8 +37,9 @@ const OvertimeList = ({
     
     // Update local state when props change
     useEffect(() => {
-        setLocalOvertimes(overtimes || []);
-        applyFilters(overtimes || [], filterStatus, searchTerm, dateRange);
+        if (!overtimes) return; // Guard against undefined overtimes prop
+        setLocalOvertimes(overtimes);
+        applyFilters(overtimes, filterStatus, searchTerm, dateRange);
     }, [overtimes]);
     
     // Set up auto-refresh timer
@@ -121,6 +124,7 @@ const OvertimeList = ({
         }
         
         setFilteredOvertimes(result);
+        return result; // Return the filtered results
     };
     
     // Handle status filter change
@@ -209,15 +213,30 @@ const OvertimeList = ({
         handleCloseModal();
     };
     
-    // Handle overtime deletion
     const handleDelete = (id) => {
         if (confirm('Are you sure you want to delete this overtime request?')) {
             setProcessing(true);
-            try {
-                onDelete(id);
-            } finally {
-                setProcessing(false);
-            }
+            
+            router.post(route('overtimes.destroy.post', id), {}, {
+                preserveScroll: true,
+                onSuccess: (page) => {
+                    // Update local state after successful deletion
+                    const updatedOvertimes = localOvertimes.filter(ot => ot.id !== id);
+                    setLocalOvertimes(updatedOvertimes);
+                    
+                    // Apply filters to the updated list
+                    applyFilters(updatedOvertimes, filterStatus, searchTerm, dateRange);
+                    // No need to set filteredOvertimes here as applyFilters does it
+                    
+                    toast.success('Overtime deleted successfully');
+                    setProcessing(false);
+                },
+                onError: (errors) => {
+                    console.error('Error deleting overtime:', errors);
+                    toast.error('Failed to delete overtime');
+                    setProcessing(false);
+                }
+            });
         }
     };
     
@@ -318,35 +337,38 @@ const OvertimeList = ({
     const handleBulkStatusUpdate = (status, remarks) => {
         setProcessing(true);
         
-        if (typeof onStatusUpdate === 'function') {
-            // Create a promise array for all updates
-            const updatePromises = selectedIds.map(id => {
-                return new Promise((resolve, reject) => {
-                    try {
-                        onStatusUpdate(id, { status, remarks });
-                        resolve();
-                    } catch (error) {
-                        reject(error);
+        // Create data for bulk update
+        const data = {
+            overtime_ids: selectedIds,
+            status: status,
+            remarks: remarks
+        };
+        
+        // Make direct API call instead of using individual promises
+        router.post(route('overtimes.bulkUpdateStatus'), data, {
+            preserveScroll: true,
+            onSuccess: (response) => {
+                // Clear selections after successful update
+                setSelectedIds([]);
+                setSelectAll(false);
+                
+                // Refresh the data - this is important to get updated records
+                router.reload({
+                    only: ['overtimes'],
+                    preserveScroll: true,
+                    onFinish: () => {
+                        setProcessing(false);
                     }
                 });
-            });
-
-            // Execute all updates
-            Promise.all(updatePromises)
-                .then(() => {
-                    // Clear selections after successful update
-                    setSelectedIds([]);
-                    setSelectAll(false);
-                })
-                .catch(error => {
-                    console.error('Error during bulk update:', error);
-                })
-                .finally(() => {
-                    setProcessing(false);
-                });
-        } else {
-            setProcessing(false);
-        }
+            },
+            onError: (errors) => {
+                console.error('Error during bulk update:', errors);
+                toast.error('Failed to update overtime requests: ' + 
+                    (errors?.message || 'Unknown error'));
+                setProcessing(false);
+            }
+        });
+        
         handleCloseBulkActionModal();
     };
     
@@ -641,6 +663,7 @@ const OvertimeList = ({
                     onClose={handleCloseModal}
                     onStatusUpdate={handleStatusUpdate}
                     userRoles={userRoles}
+                    viewOnly={true} 
                 />
             )}
 

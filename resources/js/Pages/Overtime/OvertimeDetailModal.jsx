@@ -1,9 +1,11 @@
-// resources/js/Pages/Overtime/OvertimeDetailModal.jsx
+// In OvertimeDetailModal.jsx
+// Add a view-only mode and modify the component to hide approval sections
+
 import React, { useState } from 'react';
 import { format } from 'date-fns';
 import OvertimeStatusBadge from './OvertimeStatusBadge';
 
-const OvertimeDetailModal = ({ overtime, onClose, onStatusUpdate, userRoles = {} }) => {
+const OvertimeDetailModal = ({ overtime, onClose, onStatusUpdate, userRoles = {}, viewOnly = false }) => {
     const [remarks, setRemarks] = useState('');
     const [processing, setProcessing] = useState(false);
     
@@ -28,13 +30,6 @@ const OvertimeDetailModal = ({ overtime, onClose, onStatusUpdate, userRoles = {}
             status: status,
             remarks: remarks
         };
-        
-        console.log('Submitting status update:', { 
-            overtimeId: overtime.id, 
-            status, 
-            remarks,
-            currentStatus: overtime.status
-        });
         
         // Call the onStatusUpdate with id and data
         if (typeof onStatusUpdate === 'function') {
@@ -88,33 +83,28 @@ const OvertimeDetailModal = ({ overtime, onClose, onStatusUpdate, userRoles = {}
     const isHrdManager = userRoles.isHrdManager || false;
     const isSuperAdmin = userRoles.isSuperAdmin || false;
     
-    // Log roles for debugging
-    console.log('User roles in modal:', userRoles);
-    console.log('Overtime status:', overtime.status);
-    console.log('Employee Department:', overtime.employee?.Department);
-    console.log('Managed Departments:', userRoles.managedDepartments);
-    
     // Determine if user can approve at department level
     const canApproveDept = (
-        isSuperAdmin || 
-        (isDepartmentManager && 
-         overtime.status === 'pending' &&
-         (overtime.dept_manager_id === userRoles.userId || 
-          (userRoles.managedDepartments && 
-           overtime.employee && 
-           userRoles.managedDepartments.includes(overtime.employee.Department))
-         )
+        !viewOnly && (
+            isSuperAdmin || 
+            (isDepartmentManager && 
+            overtime.status === 'pending' &&
+            (overtime.dept_manager_id === userRoles.userId || 
+                (userRoles.managedDepartments && 
+                overtime.employee && 
+                userRoles.managedDepartments.includes(overtime.employee.Department))
+            )
+            )
         )
     );
     
     // Determine if user can approve at HRD level
     const canApproveHrd = 
-        isSuperAdmin || 
-        (isHrdManager && 
-         overtime.status === 'manager_approved');
-    
-    console.log('Can approve at dept level:', canApproveDept);
-    console.log('Can approve at HRD level:', canApproveHrd);
+        !viewOnly && (
+            isSuperAdmin || 
+            (isHrdManager && 
+            overtime.status === 'manager_approved')
+        );
 
     return (
         <div className="fixed inset-0 z-50 overflow-y-auto">
@@ -292,7 +282,7 @@ const OvertimeDetailModal = ({ overtime, onClose, onStatusUpdate, userRoles = {}
                                     </div>
                                 </div>
                                 
-                                {/* Department Manager Approval Form */}
+                                {/* Department Manager Approval Form - only show if canApproveDept is true */}
                                 {canApproveDept && (
                                     <div className="mt-6 border-t border-gray-200 pt-4">
                                         <h4 className="text-md font-medium text-gray-900 mb-3">Department Manager Decision</h4>
@@ -329,7 +319,7 @@ const OvertimeDetailModal = ({ overtime, onClose, onStatusUpdate, userRoles = {}
                                     </div>
                                 )}
                                 
-                                {/* HRD Manager Approval Form */}
+                                {/* HRD Manager Approval Form - only show if canApproveHrd is true */}
                                 {canApproveHrd && (
                                     <div className="mt-6 border-t border-gray-200 pt-4">
                                         <h4 className="text-md font-medium text-gray-900 mb-3">HRD Manager Final Decision</h4>
@@ -367,7 +357,7 @@ const OvertimeDetailModal = ({ overtime, onClose, onStatusUpdate, userRoles = {}
                                 )}
 
                                 {/* Force Approve Button (Superadmin Only) */}
-                                {isSuperAdmin && overtime.status !== 'approved' && (
+                                {isSuperAdmin && !viewOnly && overtime.status !== 'approved' && (
                                     <div className="mt-6 border-t border-gray-200 pt-4">
                                         <h4 className="text-md font-medium text-gray-900 mb-3">
                                             Administrative Actions

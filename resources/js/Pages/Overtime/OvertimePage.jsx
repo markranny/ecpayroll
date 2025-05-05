@@ -51,6 +51,61 @@ const OvertimePage = () => {
             }
         });
     };
+
+    const handleBulkStatusUpdate = (id, data) => {
+        if (Array.isArray(id)) {
+            // Bulk update
+            setProcessing(true);
+            
+            const bulkUpdatePromises = id.map(overtimeId => {
+                return router.post(route('overtimes.updateStatus', overtimeId), data, {
+                    preserveScroll: true,
+                    onSuccess: () => {
+                        // Individual success - handled by the final Promise.all
+                    },
+                    onError: (errors) => {
+                        console.error(`Error updating overtime #${overtimeId}:`, errors);
+                        throw new Error(errors?.message || 'Update failed');
+                    }
+                });
+            });
+            
+            Promise.all(bulkUpdatePromises)
+                .then(() => {
+                    // Refresh data after all updates
+                    router.reload({
+                        only: ['overtimes'],
+                        preserveScroll: true,
+                        onSuccess: () => {
+                            // Don't show toast here, let the component handle it
+                            setProcessing(false);
+                        }
+                    });
+                })
+                .catch(error => {
+                    toast.error(`Error during bulk update: ${error.message}`);
+                    setProcessing(false);
+                });
+        } else {
+            // Single update
+            router.post(route('overtimes.updateStatus', id), data, {
+                preserveScroll: true,
+                onSuccess: (page) => {
+                    if (page.props.overtimes) {
+                        setOvertimeData(page.props.overtimes);
+                    }
+                    toast.success('Overtime status updated successfully');
+                },
+                onError: (errors) => {
+                    let errorMessage = 'An error occurred while updating status';
+                    if (errors && typeof errors === 'object') {
+                        errorMessage = Object.values(errors).join(', ');
+                    }
+                    toast.error(errorMessage);
+                }
+            });
+        }
+    };
     
     // Handle status updates (approve/reject)
     const handleStatusUpdate = (id, data) => {

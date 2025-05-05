@@ -215,8 +215,10 @@ Route::middleware(['auth', 'verified'])->group(function () {
             ->name('overtimes.store');
         Route::post('/overtimes/{overtime}/status', [OvertimeController::class, 'updateStatus'])
             ->name('overtimes.updateStatus');
-        Route::delete('/overtimes/{overtime}', [OvertimeController::class, 'destroy'])
-            ->name('overtimes.destroy');
+        /* Route::delete('/overtimes/{overtime}', [OvertimeController::class, 'destroy'])
+            ->name('overtimes.destroy'); */
+        Route::post('/overtimes/{overtime}/delete', [OvertimeController::class, 'destroy'])
+            ->name('overtimes.destroy.post');
         Route::get('/overtimes/export', [OvertimeController::class, 'export'])
             ->name('overtimes.export');
         Route::post('/overtimes/explain-rate', [OvertimeController::class, 'explainRateCalculation'])
