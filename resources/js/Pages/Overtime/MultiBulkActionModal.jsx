@@ -1,4 +1,3 @@
-// resources/js/Pages/Overtime/MultiBulkActionModal.jsx
 import React, { useState } from 'react';
 import { router } from '@inertiajs/react';
 import { toast } from 'react-toastify';
@@ -19,37 +18,46 @@ const MultiBulkActionModal = ({ selectedCount, onClose, onSubmit, approvalLevel,
 
         setProcessing(true);
         
-        // Log action for debugging
-        console.log('Submitting bulk action:', {
-            status,
-            remarks,
-            selectedCount,
-            approvalLevel
-        });
+        // Create data for bulk update
+        const data = {
+            overtime_ids: JSON.parse(selectedCount), // Assuming selectedCount is the JSON stringified array
+            status: status,
+            remarks: remarks
+        };
         
-        // Handle the submission
-        try {
-            // Use direct API call instead of relying on parent component's function
-            onSubmit(status, remarks);
-            
-            // Show success toast immediately
-            const actionText = status === 'rejected' 
-                ? 'rejected' 
-                : status === 'force_approved' 
-                    ? 'force approved' 
-                    : approvalLevel === 'department' 
-                        ? 'approved (Dept. Level)' 
-                        : 'approved';
+        // Make the API call directly using router.post
+        router.post(route('overtimes.bulkUpdateStatus'), {
+            overtime_ids: JSON.parse(selectedCount),
+            status: status,
+            remarks: remarks
+        }, {
+            preserveScroll: true,
+            onSuccess: (response) => {
+                // Display success message based on the response
+                const actionText = status === 'rejected' 
+                    ? 'rejected' 
+                    : status === 'force_approved' 
+                        ? 'force approved' 
+                        : approvalLevel === 'department' 
+                            ? 'approved (Dept. Level)' 
+                            : 'approved';
+                    
+                // Show success toast with the appropriate message
+                toast.success(`Successfully ${actionText} ${selectedCount} overtime request${selectedCount !== 1 ? 's' : ''}`);
                 
-            toast.success(`Successfully ${actionText} ${selectedCount} overtime request${selectedCount !== 1 ? 's' : ''}`);
-            
-            // Close modal
-            onClose();
-        } catch (error) {
-            console.error('Error in bulk action:', error);
-            toast.error('Failed to process bulk action. Please try again.');
-            setProcessing(false);
-        }
+                // Close modal and reset processing state
+                onClose();
+                setProcessing(false);
+                
+                // Reload the page to refresh data
+                window.location.reload();
+            },
+            onError: (errors) => {
+                console.error('Error in bulk action:', errors);
+                toast.error('Failed to process bulk action. Please try again.');
+                setProcessing(false);
+            }
+        });
     };
 
     return (

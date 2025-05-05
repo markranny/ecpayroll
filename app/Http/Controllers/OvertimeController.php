@@ -147,9 +147,6 @@ class OvertimeController extends Controller
 /**
  * Bulk update the status of multiple overtime requests.
  */
-/**
- * Bulk update the status of multiple overtime requests.
- */
 public function bulkUpdateStatus(Request $request)
 {
     $user = Auth::user();
@@ -273,15 +270,23 @@ public function bulkUpdateStatus(Request $request)
         
         DB::commit();
         
-        // Return JSON response instead of a redirect with flash message
-        return response()->json([
+        // Create a response message
+        $message = "{$successCount} overtime requests updated successfully." . 
+                ($failCount > 0 ? " {$failCount} updates failed." : "");
+        
+        // Store the JSON response in the session
+        $jsonResponse = [
             'success' => true,
-            'message' => "{$successCount} overtime requests updated successfully." . 
-                        ($failCount > 0 ? " {$failCount} updates failed." : ""),
+            'message' => $message,
             'successCount' => $successCount,
             'failCount' => $failCount,
             'errors' => $errors
-        ]);
+        ];
+        
+        session()->flash('json_response', $jsonResponse);
+        
+        // Return a redirect with a normal message
+        return redirect()->back()->with('message', $message);
         
     } catch (\Exception $e) {
         DB::rollBack();
@@ -291,11 +296,17 @@ public function bulkUpdateStatus(Request $request)
             'trace' => $e->getTraceAsString()
         ]);
         
-        return response()->json([
+        // Store the error JSON response in the session
+        $jsonResponse = [
             'success' => false,
             'message' => 'Error updating overtime statuses: ' . $e->getMessage(),
             'errors' => [$e->getMessage()]
-        ], 500);
+        ];
+        
+        session()->flash('json_response', $jsonResponse);
+        
+        // Return a redirect with an error message
+        return redirect()->back()->with('error', 'Error updating overtime statuses: ' . $e->getMessage());
     }
 }
 

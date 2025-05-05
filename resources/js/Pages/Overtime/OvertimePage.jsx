@@ -52,59 +52,69 @@ const OvertimePage = () => {
         });
     };
 
-    const handleBulkStatusUpdate = (id, data) => {
-        if (Array.isArray(id)) {
-            // Bulk update
-            setProcessing(true);
-            
-            const bulkUpdatePromises = id.map(overtimeId => {
-                return router.post(route('overtimes.updateStatus', overtimeId), data, {
-                    preserveScroll: true,
-                    onSuccess: () => {
-                        // Individual success - handled by the final Promise.all
-                    },
-                    onError: (errors) => {
-                        console.error(`Error updating overtime #${overtimeId}:`, errors);
-                        throw new Error(errors?.message || 'Update failed');
+    const handleBulkStatusUpdate = (status, remarks) => {
+        setProcessing(true);
+        
+        // Create data for bulk update
+        const data = {
+            overtime_ids: selectedIds,
+            status: status,
+            remarks: remarks
+        };
+        
+        // Make a direct API call
+        router.post(route('overtimes.bulkUpdateStatus'), data, {
+            preserveScroll: true,
+            onSuccess: (page) => {
+                // Clear selections after successful update
+                setSelectedIds([]);
+                setSelectAll(false);
+                
+                // Get the response from page.props
+                const response = page.props.flash?.json_response;
+                
+                if (response) {
+                    if (response.success) {
+                        toast.success(response.message);
+                    } else {
+                        toast.error(response.message);
                     }
-                });
-            });
-            
-            Promise.all(bulkUpdatePromises)
-                .then(() => {
-                    // Refresh data after all updates
-                    router.reload({
-                        only: ['overtimes'],
-                        preserveScroll: true,
-                        onSuccess: () => {
-                            // Don't show toast here, let the component handle it
-                            setProcessing(false);
-                        }
-                    });
-                })
-                .catch(error => {
-                    toast.error(`Error during bulk update: ${error.message}`);
-                    setProcessing(false);
-                });
-        } else {
-            // Single update
-            router.post(route('overtimes.updateStatus', id), data, {
-                preserveScroll: true,
-                onSuccess: (page) => {
-                    if (page.props.overtimes) {
-                        setOvertimeData(page.props.overtimes);
+                    
+                    if (response.errors && response.errors.length > 0) {
+                        response.errors.forEach(error => {
+                            toast.error(error);
+                        });
                     }
-                    toast.success('Overtime status updated successfully');
-                },
-                onError: (errors) => {
-                    let errorMessage = 'An error occurred while updating status';
-                    if (errors && typeof errors === 'object') {
-                        errorMessage = Object.values(errors).join(', ');
-                    }
-                    toast.error(errorMessage);
+                } else {
+                    // Default message if response is not available
+                    const actionText = status === 'rejected' 
+                        ? 'rejected' 
+                        : status === 'force_approved' 
+                            ? 'force approved' 
+                            : 'approved';
+                    
+                    toast.success(`Successfully ${actionText} ${selectedIds.length} overtime requests`);
                 }
-            });
-        }
+                
+                // Refresh the data
+                router.reload({
+                    only: ['overtimes'],
+                    preserveScroll: true,
+                    onFinish: () => {
+                        setProcessing(false);
+                    }
+                });
+            },
+            onError: (errors) => {
+                console.error('Error during bulk update:', errors);
+                toast.error('Failed to update overtime requests: ' + 
+                    (errors?.message || 'Unknown error'));
+                setProcessing(false);
+            }
+        });
+        
+        // Close the modal
+        handleCloseBulkActionModal();
     };
     
     // Handle status updates (approve/reject)
