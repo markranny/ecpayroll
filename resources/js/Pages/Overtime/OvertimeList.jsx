@@ -670,7 +670,7 @@ const OvertimeList = ({
             {/* Bulk Action Modal */}
             {showBulkActionModal && (
                 <MultiBulkActionModal
-                    selectedCount={selectedIds.length}
+                    selectedCount={selectedIds} 
                     onClose={handleCloseBulkActionModal}
                     onSubmit={handleBulkStatusUpdate}
                     approvalLevel={bulkApprovalLevel}

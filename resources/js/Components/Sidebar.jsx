@@ -15,27 +15,47 @@ import {
     CalendarCheck,
     ChevronLeft,
     ChevronRight,
-    ClipboardCheck
+    ClipboardCheck,
+    Radio // Added for LIVE label icon
 } from 'lucide-react';
-import '../../css/sidebar.css';
+import '../../css/sidebar.css'; // Fixed CSS import path
 
-const MenuItem = ({ icon: Icon, label, items, path, isCollapsed, showLabels }) => {
+const MenuItem = ({ icon: Icon, label, items, path, isCollapsed, showLabels, isLive }) => {
     const [isSubmenuOpen, setIsSubmenuOpen] = useState(false);
     
     // Handle hover for collapsed menu items with submenus
     const [isHovering, setIsHovering] = useState(false);
 
     if (path) {
+        // Check if it's an external link (starts with http or https)
+        const isExternalLink = path.startsWith('http');
+
         return (
-            <Link 
+            <a 
                 href={path}
                 className="block mb-1 group"
+                target={isExternalLink || isLive ? "_blank" : "_self"} // Open in new tab if it's an external link or LIVE
+                rel={isExternalLink || isLive ? "noopener noreferrer" : ""}
             >
-                <div className="flex items-center px-4 py-2.5 text-gray-600 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg transition-all duration-200 menu-item">
-                    {Icon && <Icon className="w-5 h-5 mr-3" />}
-                    {(!isCollapsed && showLabels) && <span className="flex-1 font-medium">{label}</span>}
+                <div className={`flex items-center px-4 py-2.5 text-gray-600 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg transition-all duration-200 menu-item ${isLive ? 'bg-red-50 text-red-600' : ''}`}>
+                    {Icon && <Icon className={`w-5 h-5 mr-3 ${isLive ? 'text-red-600 animate-pulse' : ''}`} />}
+                    {(!isCollapsed && showLabels) && (
+                        <div className="flex items-center">
+                            <span className={`flex-1 font-medium ${isLive ? 'text-red-600' : ''}`}>{label}</span>
+                            {isLive && (
+                                <span className="ml-2 px-2 py-0.5 text-xs font-bold bg-red-600 text-white rounded-full animate-pulse">
+                                    LIVE
+                                </span>
+                            )}
+                        </div>
+                    )}
+                    {(isCollapsed && isLive) && (
+                        <span className="absolute left-12 top-2 px-2 py-0.5 text-xs font-bold bg-red-600 text-white rounded-full animate-pulse">
+                            LIVE
+                        </span>
+                    )}
                 </div>
-            </Link>
+            </a>
         );
     }
 
@@ -64,30 +84,60 @@ const MenuItem = ({ icon: Icon, label, items, path, isCollapsed, showLabels }) =
                     <div className="px-4 py-2 text-sm font-medium text-gray-800 border-b border-gray-100 mb-1">
                         {label}
                     </div>
-                    {items.map((subItem, index) => (
-                        <Link
-                            key={index}
-                            href={subItem.path}
-                            className="block px-4 py-2 text-sm text-gray-600 hover:bg-indigo-50 hover:text-indigo-600 transition-all duration-200"
-                        >
-                            {subItem.label}
-                        </Link>
-                    ))}
+                    {items.map((subItem, index) => {
+                        // Check if it's an external link
+                        const isExternalLink = subItem.path.startsWith('http');
+                        
+                        return isExternalLink ? (
+                            <a
+                                key={index}
+                                href={subItem.path}
+                                className="block px-4 py-2 text-sm text-gray-600 hover:bg-indigo-50 hover:text-indigo-600 transition-all duration-200"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                            >
+                                {subItem.label}
+                            </a>
+                        ) : (
+                            <Link
+                                key={index}
+                                href={subItem.path}
+                                className="block px-4 py-2 text-sm text-gray-600 hover:bg-indigo-50 hover:text-indigo-600 transition-all duration-200"
+                            >
+                                {subItem.label}
+                            </Link>
+                        );
+                    })}
                 </div>
             )}
             
             {/* Regular dropdown for expanded sidebar */}
             {isSubmenuOpen && !isCollapsed && items && (
                 <div className="ml-6 mt-1 space-y-1">
-                    {items.map((subItem, index) => (
-                        <Link
-                            key={index}
-                            href={subItem.path}
-                            className="block px-4 py-2 text-sm text-gray-600 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg transition-all duration-200"
-                        >
-                            {subItem.label}
-                        </Link>
-                    ))}
+                    {items.map((subItem, index) => {
+                        // Check if it's an external link
+                        const isExternalLink = subItem.path.startsWith('http');
+                        
+                        return isExternalLink ? (
+                            <a
+                                key={index}
+                                href={subItem.path}
+                                className="block px-4 py-2 text-sm text-gray-600 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg transition-all duration-200"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                            >
+                                {subItem.label}
+                            </a>
+                        ) : (
+                            <Link
+                                key={index}
+                                href={subItem.path}
+                                className="block px-4 py-2 text-sm text-gray-600 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg transition-all duration-200"
+                            >
+                                {subItem.label}
+                            </Link>
+                        );
+                    })}
                 </div>
             )}
         </div>
@@ -294,6 +344,14 @@ const Sidebar = ({ showSidebar = true }) => {
             label: 'Settings',
             allowedRoles: ['superadmin'],
             path: '/settings'
+        },
+        // Live System with direct URL link that opens in a new tab
+        {
+            icon: Radio,
+            label: 'Live System',
+            path: 'http://26.126.108.183:8888',
+            allowedRoles: ['superadmin', 'hrd_manager', 'department_manager', 'finance', 'employee'],
+            isLive: true 
         }
     ];
 
@@ -352,6 +410,7 @@ const Sidebar = ({ showSidebar = true }) => {
                                     path={item.path}
                                     isCollapsed={isCollapsed}
                                     showLabels={showLabels}
+                                    isLive={item.isLive}
                                 />
                             ))}
                     </nav>

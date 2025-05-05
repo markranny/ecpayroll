@@ -18,22 +18,20 @@ const MultiBulkActionModal = ({ selectedCount, onClose, onSubmit, approvalLevel,
 
         setProcessing(true);
         
-        // Create data for bulk update
-        const data = {
-            overtime_ids: JSON.parse(selectedCount), // Assuming selectedCount is the JSON stringified array
-            status: status,
-            remarks: remarks
-        };
-        
         // Make the API call directly using router.post
+        // Ensure selectedCount is properly converted to an array if it's a JSON string
+        const overtimeIds = Array.isArray(selectedCount) ? selectedCount : 
+                           typeof selectedCount === 'string' && selectedCount.startsWith('[') ? 
+                           JSON.parse(selectedCount) : [selectedCount];
+        
         router.post(route('overtimes.bulkUpdateStatus'), {
-            overtime_ids: JSON.parse(selectedCount),
+            overtime_ids: overtimeIds,
             status: status,
             remarks: remarks
         }, {
             preserveScroll: true,
-            onSuccess: (response) => {
-                // Display success message based on the response
+            onSuccess: () => {
+                // Display success message based on the status
                 const actionText = status === 'rejected' 
                     ? 'rejected' 
                     : status === 'force_approved' 
@@ -43,7 +41,7 @@ const MultiBulkActionModal = ({ selectedCount, onClose, onSubmit, approvalLevel,
                             : 'approved';
                     
                 // Show success toast with the appropriate message
-                toast.success(`Successfully ${actionText} ${selectedCount} overtime request${selectedCount !== 1 ? 's' : ''}`);
+                toast.success(`Successfully ${actionText} ${Array.isArray(overtimeIds) ? overtimeIds.length : 1} overtime request${Array.isArray(overtimeIds) && overtimeIds.length !== 1 ? 's' : ''}`);
                 
                 // Close modal and reset processing state
                 onClose();
@@ -62,6 +60,7 @@ const MultiBulkActionModal = ({ selectedCount, onClose, onSubmit, approvalLevel,
 
     return (
         <div className="fixed inset-0 z-50 overflow-y-auto">
+            {/* Rest of your component remains the same */}
             <div className="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
                 <div className="fixed inset-0 transition-opacity" aria-hidden="true">
                     <div className="absolute inset-0 bg-gray-500 opacity-75"></div>
@@ -79,7 +78,9 @@ const MultiBulkActionModal = ({ selectedCount, onClose, onSubmit, approvalLevel,
                             </div>
                             <div className="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left w-full">
                                 <h3 className="text-lg leading-6 font-medium text-gray-900">
-                                    Bulk Update {selectedCount} Overtime Request{selectedCount !== 1 ? 's' : ''}
+                                    Bulk Update {Array.isArray(selectedCount) ? selectedCount.length : 
+                                              typeof selectedCount === 'string' && selectedCount.startsWith('[') ? 
+                                              JSON.parse(selectedCount).length : selectedCount} Overtime Request{selectedCount !== 1 ? 's' : ''}
                                 </h3>
                                 <div className="mt-4">
                                     <div className="mb-4">
@@ -129,6 +130,7 @@ const MultiBulkActionModal = ({ selectedCount, onClose, onSubmit, approvalLevel,
                                         </div>
                                     </div>
                                     
+                                    {/* Rest of your component remains the same */}
                                     {/* Warning message for force approval */}
                                     {status === 'force_approved' && (
                                         <div className="mb-4 bg-yellow-50 p-3 rounded-md">
@@ -156,7 +158,7 @@ const MultiBulkActionModal = ({ selectedCount, onClose, onSubmit, approvalLevel,
                                             rows={3}
                                             value={remarks}
                                             onChange={(e) => setRemarks(e.target.value)}
-                                            placeholder={`Enter remarks for ${selectedCount} overtime request${selectedCount !== 1 ? 's' : ''}`}
+                                            placeholder={`Enter remarks for overtime requests`}
                                         ></textarea>
                                         {status === 'rejected' && (
                                             <p className="mt-1 text-sm text-gray-500">
