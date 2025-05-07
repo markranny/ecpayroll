@@ -345,13 +345,13 @@ const Sidebar = ({ showSidebar = true }) => {
             allowedRoles: ['superadmin'],
             path: '/settings'
         },
-        // Live System with direct URL link that opens in a new tab
+        
         {
             icon: Radio,
-            label: 'Live System',
+            label: 'OFFLINE',
             path: 'http://26.126.108.183:8888',
             allowedRoles: ['superadmin', 'hrd_manager', 'department_manager', 'finance', 'employee'],
-            isLive: true 
+            isLive: false 
         }
     ];
 
