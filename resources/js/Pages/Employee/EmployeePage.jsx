@@ -203,7 +203,18 @@ const EmployeeForm = ({ isOpen, onClose, employee = null, mode = 'create' }) => 
                 preserveScroll: true,
             });
         } else {
+            // Make sure employee object exists and has an id
+            if (!employee || !employee.id) {
+                console.error('Employee object or ID is missing');
+                setErrors({ general: 'Unable to update: Employee ID is missing' });
+                return;
+            }
+            
+            // Use the route with the employee ID
             router.put(`/employees/${employee.id}`, processedData, {
+                headers: {
+                    'Accept': 'application/json',
+                },
                 onError: (errors) => {
                     console.error('Validation errors:', errors);
                     setErrors(errors);
@@ -711,6 +722,7 @@ const TabsContent = ({ children, value, activeTab }) => {
 };
 
 // EmployeeList Component
+// EmployeeList Component
 const EmployeeList = ({ employees, onView, onEdit, onDelete, onMarkInactive, onMarkBlocked, onMarkActive }) => {
     if (!employees?.length) {
         return <div className="p-4 text-center text-gray-500">No employees found</div>;
@@ -754,6 +766,9 @@ const EmployeeList = ({ employees, onView, onEdit, onDelete, onMarkInactive, onM
                         </th>
                         <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                             ID No.
+                        </th>
+                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            BID
                         </th>
                         <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                             Name
@@ -846,6 +861,7 @@ const EmployeeList = ({ employees, onView, onEdit, onDelete, onMarkInactive, onM
                                 </div>
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap">{employee.idno}</td>
+                            <td className="px-6 py-4 whitespace-nowrap font-medium text-blue-600">{employee.bid || '-'}</td>
                             <td className="px-6 py-4 whitespace-nowrap">
                                 {`${employee.Lname}, ${employee.Fname} ${employee.MName || ''}`}
                             </td>
