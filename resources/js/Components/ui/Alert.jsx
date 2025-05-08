@@ -1,24 +1,47 @@
-import React from 'react';
+import * as React from "react"
+import { cva } from "class-variance-authority";
 
-export const Alert = ({ children, variant = 'default', className = '' }) => {
-  const variants = {
-    default: 'bg-gray-100 border-gray-200 text-gray-800',
-    destructive: 'bg-red-100 border-red-200 text-red-800',
-    warning: 'bg-yellow-100 border-yellow-200 text-yellow-800',
-    success: 'bg-green-100 border-green-200 text-green-800'
-  };
+import { cn } from "@/lib/utils"
 
-  return (
-    <div className={`p-4 rounded-lg border ${variants[variant]} ${className}`}>
-      {children}
-    </div>
-  );
-};
+const alertVariants = cva(
+  "relative w-full rounded-lg border px-4 py-3 text-sm [&>svg+div]:translate-y-[-3px] [&>svg]:absolute [&>svg]:left-4 [&>svg]:top-4 [&>svg]:text-foreground [&>svg~*]:pl-7",
+  {
+    variants: {
+      variant: {
+        default: "bg-background text-foreground",
+        destructive:
+          "border-destructive/50 text-destructive dark:border-destructive [&>svg]:text-destructive",
+      },
+    },
+    defaultVariants: {
+      variant: "default",
+    },
+  }
+)
 
-export const AlertTitle = ({ children }) => (
-  <h5 className="font-medium mb-1">{children}</h5>
-);
+const Alert = React.forwardRef(({ className, variant, ...props }, ref) => (
+  <div
+    ref={ref}
+    role="alert"
+    className={cn(alertVariants({ variant }), className)}
+    {...props} />
+))
+Alert.displayName = "Alert"
 
-export const AlertDescription = ({ children }) => (
-  <div className="text-sm">{children}</div>
-);
+const AlertTitle = React.forwardRef(({ className, ...props }, ref) => (
+  <h5
+    ref={ref}
+    className={cn("mb-1 font-medium leading-none tracking-tight", className)}
+    {...props} />
+))
+AlertTitle.displayName = "AlertTitle"
+
+const AlertDescription = React.forwardRef(({ className, ...props }, ref) => (
+  <div
+    ref={ref}
+    className={cn("text-sm [&_p]:leading-relaxed", className)}
+    {...props} />
+))
+AlertDescription.displayName = "AlertDescription"
+
+export { Alert, AlertTitle, AlertDescription }

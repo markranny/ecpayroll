@@ -280,18 +280,17 @@ const Sidebar = ({ showSidebar = true }) => {
         {
             icon: Building2,
             label: 'Manage',
-            allowedRoles: ['superadmin', 'hrd_manager'],
+            allowedRoles: ['superadmin', 'hrd'],
             items: [
                 { label: 'Line & Section', path: '/manage/line-section' },
                 { label: 'Departments', path: '/manage/departments' },
-                { label: 'Department Managers', path: '/manage/department-managers' },
                 { label: 'Roles And Access', path: '/manage/roles' }
             ]
         },
         {
             icon: UserCog,
             label: 'Core HR',
-            allowedRoles: ['superadmin', 'hrd_manager'],
+            allowedRoles: ['superadmin', 'hrd'],
             items: [
                 { label: 'Promotion', path: '/core-hr/promotion' },
                 { label: 'Award', path: '/core-hr/award' },
@@ -306,24 +305,23 @@ const Sidebar = ({ showSidebar = true }) => {
         {
             icon: Calendar,
             label: 'HR Calendar',
-            allowedRoles: ['superadmin', 'hrd_manager'],
+            allowedRoles: ['superadmin', 'hrd'],
             path: '/hr-calendar'
         },
         {
             icon: FileBarChart,
             label: 'HR Reports',
-            allowedRoles: ['superadmin', 'hrd_manager'],
+            allowedRoles: ['superadmin', 'hrd'],
             items: [
                 { label: 'Daily Attendances', path: '/reports/daily-attendance' },
                 { label: 'Monthly Attendance', path: '/reports/monthly-attendance' },
-                { label: 'Training Report', path: '/reports/training' },
-                { label: 'Overtime Reports', path: '/reports/overtime' }
+                { label: 'Training Report', path: '/reports/training' }
             ]
         },
         {
             icon: GraduationCap,
             label: 'Training',
-            allowedRoles: ['superadmin', 'hrd_manager'],
+            allowedRoles: ['superadmin', 'hrd'],
             items: [
                 { label: 'Training Lists', path: '/training/lists' },
                 { label: 'Training Type', path: '/training/types' },
@@ -333,7 +331,7 @@ const Sidebar = ({ showSidebar = true }) => {
         {
             icon: CalendarCheck,
             label: 'Events & Meetings',
-            allowedRoles: ['superadmin', 'hrd_manager'],
+            allowedRoles: ['superadmin', 'hrd'],
             items: [
                 { label: 'Events', path: '/events' },
                 { label: 'Meetings', path: '/meetings' }

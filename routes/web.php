@@ -21,6 +21,19 @@ use App\Http\Controllers\BenefitController;
 use App\Http\Controllers\Auth\EmployeeRegistrationController;
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\ProcessedAttendanceController;
+use App\Http\Controllers\PromotionController;
+use App\Http\Controllers\AwardController;
+use App\Http\Controllers\TransferController;
+use App\Http\Controllers\ResignationController;
+use App\Http\Controllers\ComplaintController;
+use App\Http\Controllers\WarningController;
+use App\Http\Controllers\TerminationController;
+use App\Http\Controllers\DepartmentController;
+use App\Http\Controllers\LineController;
+use App\Http\Controllers\SectionController;
+use App\Http\Controllers\TrainingsController;
+use App\Http\Controllers\MeetingsController; 
+use App\Http\Controllers\EventsController; 
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Auth;
@@ -389,5 +402,250 @@ Route::middleware(['auth', 'verified'])->group(function () {
         ->name('profile.destroy');
 });
 
-// Include additional authentication routes
+// Management Routes
+Route::middleware(['role:superadmin,hrd'])->prefix('manage')->group(function () {
+    Route::get('/departments', function () {
+        return Inertia::render('Manage/Departments', [
+            'auth' => [
+                'user' => Auth::user()
+            ]
+        ]);
+    })->name('manage.departments');
+    
+    Route::get('/lines-sections', function () {
+        return Inertia::render('Manage/LineAndSection', [
+            'auth' => [
+                'user' => Auth::user()
+            ]
+        ]);
+    })->name('manage.lines-sections');
+    
+    Route::get('/line-section', function () {
+        return Inertia::render('Manage/LineAndSection', [
+            'auth' => [
+                'user' => Auth::user()
+            ]
+        ]);
+    })->name('manage.line-section');
+    
+    // Add the new route for roles access
+    Route::get('/roles', function () {
+        return Inertia::render('Manage/RolesAndAccess', [
+            'auth' => [
+                'user' => Auth::user()
+            ]
+        ]);
+    })->name('manage.roles');
+});
+
+Route::middleware(['auth:sanctum'])->group(function () {
+    // Department routes
+    Route::get('/departments', [DepartmentController::class, 'index']);
+    Route::post('/departments', [DepartmentController::class, 'store']);
+    Route::put('/departments/{id}', [DepartmentController::class, 'update']);
+    Route::delete('/departments/{id}', [DepartmentController::class, 'destroy']);
+    Route::patch('/departments/{id}/toggle-active', [DepartmentController::class, 'toggleActive']);
+    
+    // Line routes
+    Route::get('/lines', [LineController::class, 'index']);
+    Route::post('/lines', [LineController::class, 'store']);
+    Route::put('/lines/{id}', [LineController::class, 'update']);
+    Route::delete('/lines/{id}', [LineController::class, 'destroy']);
+    Route::patch('/lines/{id}/toggle-active', [LineController::class, 'toggleActive']);
+
+    // Section routes
+    Route::get('/sections', [SectionController::class, 'index']);
+    Route::post('/sections', [SectionController::class, 'store']);
+    Route::put('/sections/{id}', [SectionController::class, 'update']);
+    Route::delete('/sections/{id}', [SectionController::class, 'destroy']);
+    Route::patch('/sections/{id}/toggle-active', [SectionController::class, 'toggleActive']);
+});
+
+// CoreHR Routes
+// CoreHR Routes
+Route::middleware(['role:superadmin,hrd'])->group(function () {
+    // Promotion Routes
+    Route::get('/core-hr/promotion', function () {
+        return Inertia::render('CoreHR/Promotion', [
+            'auth' => ['user' => Auth::user()]
+        ]);
+    })->name('promotions.page');
+    Route::get('/promotions/list', [PromotionController::class, 'list'])->name('promotions.list');
+    Route::post('/promotions', [PromotionController::class, 'store'])->name('promotions.store');
+    Route::put('/promotions/{id}', [PromotionController::class, 'update'])->name('promotions.update');
+    Route::post('/promotions/{id}/status', [PromotionController::class, 'updateStatus'])->name('promotions.updateStatus');
+    Route::delete('/promotions/{id}', [PromotionController::class, 'destroy'])->name('promotions.destroy');
+    Route::get('/promotions/export', [PromotionController::class, 'export'])->name('promotions.export');
+
+    // Award Routes
+    Route::get('/core-hr/award', function () {
+        return Inertia::render('CoreHR/Award', [
+            'auth' => ['user' => Auth::user()]
+        ]);
+    })->name('awards.page');
+    Route::get('/awards/list', [AwardController::class, 'list'])->name('awards.list');
+    Route::post('/awards', [AwardController::class, 'store'])->name('awards.store');
+    Route::put('/awards/{id}', [AwardController::class, 'update'])->name('awards.update');
+    Route::delete('/awards/{id}', [AwardController::class, 'destroy'])->name('awards.destroy');
+    Route::get('/awards/export', [AwardController::class, 'export'])->name('awards.export');
+
+    // Transfer Routes
+    Route::get('/core-hr/transfer', function () {
+        return Inertia::render('CoreHR/Transfer', [
+            'auth' => ['user' => Auth::user()]
+        ]);
+    })->name('transfers.page');
+    Route::get('/transfers/list', [TransferController::class, 'list'])->name('transfers.list');
+    Route::post('/transfers', [TransferController::class, 'store'])->name('transfers.store');
+    Route::put('/transfers/{id}', [TransferController::class, 'update'])->name('transfers.update');
+    Route::post('/transfers/{id}/status', [TransferController::class, 'updateStatus'])->name('transfers.updateStatus');
+    Route::delete('/transfers/{id}', [TransferController::class, 'destroy'])->name('transfers.destroy');
+    Route::get('/transfers/export', [TransferController::class, 'export'])->name('transfers.export');
+
+    // Resignation Routes
+    Route::get('/core-hr/resignations', function () {
+        return Inertia::render('CoreHR/Resignations', [
+            'auth' => ['user' => Auth::user()]
+        ]);
+    })->name('resignations.page');
+    Route::get('/resignations/list', [ResignationController::class, 'list'])->name('resignations.list');
+    Route::post('/resignations', [ResignationController::class, 'store'])->name('resignations.store');
+    Route::put('/resignations/{id}', [ResignationController::class, 'update'])->name('resignations.update');
+    Route::post('/resignations/{id}/status', [ResignationController::class, 'updateStatus'])->name('resignations.updateStatus');
+    Route::delete('/resignations/{id}', [ResignationController::class, 'destroy'])->name('resignations.destroy');
+    Route::get('/resignations/export', [ResignationController::class, 'export'])->name('resignations.export');
+
+    // Complaint Routes
+    Route::get('/core-hr/complaints', function () {
+        return Inertia::render('CoreHR/Complaints', [
+            'auth' => ['user' => Auth::user()]
+        ]);
+    })->name('complaints.page');
+    Route::get('/complaints/list', [ComplaintController::class, 'list'])->name('complaints.list');
+    Route::post('/complaints', [ComplaintController::class, 'store'])->name('complaints.store');
+    Route::put('/complaints/{id}', [ComplaintController::class, 'update'])->name('complaints.update');
+    Route::post('/complaints/{id}/status', [ComplaintController::class, 'updateStatus'])->name('complaints.updateStatus');
+    Route::delete('/complaints/{id}', [ComplaintController::class, 'destroy'])->name('complaints.destroy');
+    Route::get('/complaints/export', [ComplaintController::class, 'export'])->name('complaints.export');
+
+    // Warning Routes
+    Route::get('/core-hr/warnings', function () {
+        return Inertia::render('CoreHR/Warnings', [
+            'auth' => ['user' => Auth::user()]
+        ]);
+    })->name('warnings.page');
+    Route::get('/warnings/list', [WarningController::class, 'list'])->name('warnings.list');
+    Route::post('/warnings', [WarningController::class, 'store'])->name('warnings.store');
+    Route::put('/warnings/{id}', [WarningController::class, 'update'])->name('warnings.update');
+    Route::delete('/warnings/{id}', [WarningController::class, 'destroy'])->name('warnings.destroy');
+    Route::get('/warnings/export', [WarningController::class, 'export'])->name('warnings.export');
+
+    // Termination Routes
+    Route::get('/core-hr/terminations', function () {
+        return Inertia::render('CoreHR/Termination', [
+            'auth' => ['user' => Auth::user()]
+        ]);
+    })->name('terminations.page');
+    Route::get('/terminations/list', [TerminationController::class, 'list'])->name('terminations.list');
+    Route::post('/terminations', [TerminationController::class, 'store'])->name('terminations.store');
+    Route::put('/terminations/{id}', [TerminationController::class, 'update'])->name('terminations.update');
+    Route::post('/terminations/{id}/status', [TerminationController::class, 'updateStatus'])->name('terminations.updateStatus');
+    Route::delete('/terminations/{id}', [TerminationController::class, 'destroy'])->name('terminations.destroy');
+    Route::get('/terminations/export', [TerminationController::class, 'export'])->name('terminations.export');
+
+    // Travel Routes
+    Route::get('/core-hr/travel', function () {
+        return Inertia::render('CoreHR/Travel', [
+            'auth' => ['user' => Auth::user()]
+        ]);
+    })->name('travel.page');
+    Route::get('/travel/list', [TravelController::class, 'list'])->name('travel.list');
+    Route::post('/travel', [TravelController::class, 'store'])->name('travel.store');
+    Route::put('/travel/{id}', [TravelController::class, 'update'])->name('travel.update');
+    Route::post('/travel/{id}/status', [TravelController::class, 'updateStatus'])->name('travel.updateStatus');
+    Route::delete('/travel/{id}', [TravelController::class, 'destroy'])->name('travel.destroy');
+    Route::get('/travel/export', [TravelController::class, 'export'])->name('travel.export');
+});
+// Add this route to your existing middleware group for meetings
+Route::middleware(['auth', 'verified', 'role:superadmin,hrd'])->group(function () {
+    // Existing routes...
+    
+    Route::get('/meetings', function () {
+        $status = request()->input('status', 'all');
+        
+        $meetings = \App\Models\Meeting::query()
+            ->when($status !== 'all', function ($query) use ($status) {
+                return $query->where('status', $status);
+            })
+            ->with('participants')
+            ->withCount('participants')
+            ->orderBy('start_time', 'desc')
+            ->get();
+        
+        $counts = [
+            'total' => \App\Models\Meeting::count(),
+            'scheduled' => \App\Models\Meeting::where('status', 'Scheduled')->count(),
+            'completed' => \App\Models\Meeting::where('status', 'Completed')->count(),
+            'cancelled' => \App\Models\Meeting::where('status', 'Cancelled')->count(),
+            'postponed' => \App\Models\Meeting::where('status', 'Postponed')->count(),
+        ];
+        
+        return Inertia::render('MeetingAndEvents/Meetings', [
+            'meetings' => $meetings,
+            'counts' => $counts,
+            'currentStatus' => $status,
+            'auth' => ['user' => Auth::user()]
+        ]);
+    })->name('meetings.index');
+    // API routes for Meetings
+    Route::post('/meetings/{id}/reschedule', [MeetingsController::class, 'reschedule'])
+->name('meetings.reschedule');
+    Route::get('/meetings/list', [MeetingsController::class, 'list'])
+        ->name('meetings.list');
+    Route::post('/meetings', [MeetingsController::class, 'store'])
+        ->name('meetings.store');
+    Route::put('/meetings/{id}', [MeetingsController::class, 'update'])
+        ->name('meetings.update');
+    Route::delete('/meetings/{id}', [MeetingsController::class, 'destroy'])
+        ->name('meetings.destroy');
+    Route::post('/meetings/{id}/mark-completed', [MeetingsController::class, 'markCompleted'])
+        ->name('meetings.mark-completed');
+    Route::post('/meetings/{id}/mark-cancelled', [MeetingsController::class, 'markCancelled'])
+        ->name('meetings.mark-cancelled');
+    Route::post('/meetings/{id}/mark-scheduled', [MeetingsController::class, 'markScheduled'])
+        ->name('meetings.mark-scheduled');
+    Route::get('/meetings/export', [MeetingsController::class, 'export'])
+        ->name('meetings.export');
+    Route::get('/api/employees', [EmployeeController::class, 'getEmployeesForSelect'])
+        ->name('api.employees');
+
+    Route::get('/events', [EventsController::class, 'index'])->name('events.index');
+
+    // The rest of your routes are fine:
+    Route::get('/events/debug', [EventsController::class, 'debug'])->name('events.debug');
+    Route::get('/events/list', [EventsController::class, 'list'])->name('events.list');
+    Route::post('/events', [EventsController::class, 'store'])->name('events.store');
+    Route::put('/events/{id}', [EventsController::class, 'update'])->name('events.update');
+    Route::delete('/events/{id}', [EventsController::class, 'destroy'])->name('events.destroy');
+    Route::post('/events/{id}/status', [EventsController::class, 'updateStatus'])->name('events.updateStatus');
+    Route::get('/events/export', [EventsController::class, 'export'])->name('events.export');
+});
+// Add this route inside your middleware group with other HR-related routes
+Route::middleware(['auth', 'verified', 'role:superadmin,hrd'])->group(function () {
+    // HR Calendar routes - updated to reflect correct path
+    Route::get('/hr-calendar', function () {
+        return Inertia::render('HRCalendar/HrCalendar', [
+            'auth' => ['user' => Auth::user()]
+        ]);
+    })->name('hr-calendar.index');
+
+    // API endpoints for HR Calendar
+    Route::get('/hr-calendar/data', [HrCalendarController::class, 'getData'])
+        ->name('hr-calendar.data');
+    Route::get('/hr-calendar/departments', [HrCalendarController::class, 'getDepartments'])
+        ->name('hr-calendar.departments');
+        Route::put('/events/{id}/reschedule', [EventsController::class, 'reschedule'])
+        ->name('events.reschedule');
+});
+
 require __DIR__.'/auth.php';

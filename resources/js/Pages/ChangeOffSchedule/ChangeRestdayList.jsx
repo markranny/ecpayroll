@@ -151,20 +151,25 @@ const ChangeRestdayList = ({
             setProcessing(true);
             
             router.post(route('change-off-schedules.destroy', id), {
-                _method: 'DELETE'  // Method spoofing to simulate DELETE request
+                _method: 'DELETE'
             }, {
                 preserveScroll: true,
                 onSuccess: () => {
                     toast.success('Change rest day request deleted successfully');
                     
-                    // Reload using Inertia's reload method
-                    router.reload({
-                        only: ['changeOffs'], // Only reload the changeOffs prop
-                        preserveScroll: true,
-                        onFinish: () => {
-                            setProcessing(false);
-                        }
-                    });
+                    // Update the local state instead of reloading the page
+                    const updatedLocalChangeOffs = localChangeOffs.filter(item => item.id !== id);
+                    setLocalChangeOffs(updatedLocalChangeOffs);
+                    
+                    // Also update filtered change offs
+                    setFilteredChangeOffs(prev => prev.filter(item => item.id !== id));
+                    
+                    // Clear selection if the deleted item was selected
+                    if (selectedIds.includes(id)) {
+                        setSelectedIds(prev => prev.filter(itemId => itemId !== id));
+                    }
+                    
+                    setProcessing(false);
                 },
                 onError: (errors) => {
                     console.error('Error deleting:', errors);
@@ -173,7 +178,7 @@ const ChangeRestdayList = ({
                 }
             });
         }
-    };
+    }
     
     // Format date safely
     const formatDate = (dateString) => {
@@ -237,17 +242,41 @@ const ChangeRestdayList = ({
         router.post(route('change-off-schedules.bulkUpdateStatus'), data, {
             preserveScroll: true,
             onSuccess: (page) => {
-                setSelectedIds([]);
-                setSelectAll(false);
+                // Update local state instead of reloading the page
+                const updatedChangeOffs = localChangeOffs.map(item => {
+                    if (selectedIds.includes(item.id)) {
+                        return {
+                            ...item,
+                            status: status,
+                            remarks: remarks,
+                            approved_at: new Date().toISOString(),
+                            approver: page.props?.auth?.user ? {
+                                id: page.props.auth.user.id,
+                                name: page.props.auth.user.name
+                            } : null
+                        };
+                    }
+                    return item;
+                });
                 
-                // Check for message in the page props
+                // Update both local and filtered states
+                setLocalChangeOffs(updatedChangeOffs);
+                
+                // Re-apply current filters to the updated data
+                applyFilters(updatedChangeOffs, filterStatus, searchTerm, dateRange);
+                
+                // Show success message
                 if (page.props?.flash?.message) {
                     toast.success(page.props.flash.message);
                 } else {
                     toast.success(`Successfully ${status} ${selectedIds.length} change rest day requests`);
                 }
                 
-                // Clear selected items and refresh the data
+                // Clear selected items
+                setSelectedIds([]);
+                setSelectAll(false);
+                
+                // Close modal and reset processing state
                 handleCloseBulkActionModal();
                 setProcessing(false);
             },
@@ -257,7 +286,7 @@ const ChangeRestdayList = ({
                 setProcessing(false);
             }
         });
-    };
+    }
     
     // Export to Excel functionality
     const exportToExcel = () => {
