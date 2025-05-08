@@ -118,89 +118,71 @@ class EmployeeController extends Controller
     }
 
     public function update(Request $request, $id)
-    {
-        $employee = Employee::findOrFail($id);
-        
-        $validator = Validator::make($request->all(), [
-            'idno' => 'nullable|unique:employees,idno,' . $id,
-            'bid' => 'nullable|string',
-            'Lname' => 'required|string',
-            'Fname' => 'required|string',
-            'MName' => 'nullable|string',
-            'Suffix' => 'nullable|string',
-            'Gender' => 'nullable|in:Male,Female',
-            'EducationalAttainment' => 'nullable|string',
-            'Degree' => 'nullable|string',
-            'CivilStatus' => 'nullable|string',
-            'Birthdate' => 'nullable|date',
-            'ContactNo' => 'nullable|string',
-            'Email' => 'required|email|unique:employees,Email,' . $id,
-            'PresentAddress' => 'nullable|string',
-            'PermanentAddress' => 'nullable|string',
-            'EmerContactName' => 'nullable|string',
-            'EmerContactNo' => 'nullable|string',
-            'EmerRelationship' => 'nullable|string',
-            'EmpStatus' => 'nullable|string',
-            'JobStatus' => 'nullable|string',
-            'RankFile' => 'nullable|string',
-            'Department' => 'required|string',
-            'Line' => 'nullable|string',
-            'Jobtitle' => 'required|string',
-            'HiredDate' => 'nullable|date',
-            'EndOfContract' => 'nullable|date',
-            'pay_type' => 'nullable|string',
-            'payrate' => 'nullable|numeric|between:0,999999.99',
-            'pay_allowance' => 'nullable|numeric|between:0,999999.99',
-            'SSSNO' => 'nullable|string',
-            'PHILHEALTHNo' => 'nullable|string',
-            'HDMFNo' => 'nullable|string',
-            'TaxNo' => 'nullable|string',
-            'Taxable' => 'nullable|boolean',
-            'CostCenter' => 'nullable|string',
-        ]);
+{
+    $employee = Employee::findOrFail($id);
+    
+    $validator = Validator::make($request->all(), [
+        'idno' => 'nullable|unique:employees,idno,' . $id,
+        'bid' => 'nullable|string',
+        'Lname' => 'required|string',
+        'Fname' => 'required|string',
+        'MName' => 'nullable|string',
+        'Suffix' => 'nullable|string',
+        'Gender' => 'nullable|in:Male,Female',
+        'EducationalAttainment' => 'nullable|string',
+        'Degree' => 'nullable|string',
+        'CivilStatus' => 'nullable|string',
+        'Birthdate' => 'nullable|date',
+        'ContactNo' => 'nullable|string',
+        'Email' => 'required|email|unique:employees,Email,' . $id,
+        'PresentAddress' => 'nullable|string',
+        'PermanentAddress' => 'nullable|string',
+        'EmerContactName' => 'nullable|string',
+        'EmerContactNo' => 'nullable|string',
+        'EmerRelationship' => 'nullable|string',
+        'EmpStatus' => 'nullable|string',
+        'JobStatus' => 'nullable|string',
+        'RankFile' => 'nullable|string',
+        'Department' => 'required|string',
+        'Line' => 'nullable|string',
+        'Jobtitle' => 'required|string',
+        'HiredDate' => 'nullable|date',
+        'EndOfContract' => 'nullable|date',
+        'pay_type' => 'nullable|string',
+        'payrate' => 'nullable|numeric|between:0,999999.99',
+        'pay_allowance' => 'nullable|numeric|between:0,999999.99',
+        'SSSNO' => 'nullable|string',
+        'PHILHEALTHNo' => 'nullable|string',
+        'HDMFNo' => 'nullable|string',
+        'TaxNo' => 'nullable|string',
+        'Taxable' => 'nullable|boolean',
+        'CostCenter' => 'nullable|string',
+    ]);
 
-        if ($validator->fails()) {
-            // Fix: Check if the request expects JSON and return appropriate response
-            if ($request->expectsJson()) {
-                return response()->json([
-                    'errors' => $validator->errors()
-                ], 422);
-            }
-            
-            return redirect()->back()
-                ->withErrors($validator)
-                ->withInput();
-        }
-
-        try {
-            $employee->update($request->all());
-            
-            // Fix: Check if the request expects JSON and return appropriate response
-            if ($request->expectsJson()) {
-                return response()->json([
-                    'message' => 'Employee updated successfully'
-                ]);
-            }
-            
-            return redirect()->back()->with('message', 'Employee updated successfully');
-        } catch (\Exception $e) {
-            Log::error('Failed to update employee', [
-                'id' => $id,
-                'error' => $e->getMessage()
-            ]);
-            
-            // Fix: Check if the request expects JSON and return appropriate response
-            if ($request->expectsJson()) {
-                return response()->json([
-                    'error' => 'Failed to update employee: ' . $e->getMessage()
-                ], 500);
-            }
-            
-            return redirect()->back()
-                ->with('error', 'Failed to update employee: ' . $e->getMessage())
-                ->withInput();
-        }
+    if ($validator->fails()) {
+        // Since this is an Inertia request, return with errors
+        return redirect()->back()
+            ->withErrors($validator)
+            ->withInput();
     }
+
+    try {
+        $employee->update($request->all());
+        
+        // Return Inertia redirect with success message
+        return redirect()->route('employees.index')
+            ->with('message', 'Employee updated successfully');
+    } catch (\Exception $e) {
+        Log::error('Failed to update employee', [
+            'id' => $id,
+            'error' => $e->getMessage()
+        ]);
+        
+        return redirect()->back()
+            ->with('error', 'Failed to update employee: ' . $e->getMessage())
+            ->withInput();
+    }
+}
 
     /**
      * Remove the specified employee.

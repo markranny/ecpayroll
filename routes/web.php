@@ -128,8 +128,10 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::get('/', [EmployeeController::class, 'index'])->name('employees.index');
         Route::get('/list', [EmployeeController::class, 'index'])->name('employees.list');
         Route::post('/', [EmployeeController::class, 'store'])->name('employees.store');
-        /* Route::put('/{id}', [EmployeeController::class, 'update'])->name('employees.update'); */
+        
+        // UPDATE THIS LINE - Add proper PUT route for updating employees
         Route::put('/{id}', [EmployeeController::class, 'update'])->name('employees.update');
+        
         Route::delete('/{id}', [EmployeeController::class, 'destroy'])->name('employees.destroy');
         
         // Employee Status Management

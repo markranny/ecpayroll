@@ -210,10 +210,11 @@ const EmployeeForm = ({ isOpen, onClose, employee = null, mode = 'create' }) => 
                 return;
             }
             
-            // Use the route with the employee ID
+            // Use the route with the employee ID - FIX: use proper model binding
             router.put(`/employees/${employee.id}`, processedData, {
                 headers: {
                     'Accept': 'application/json',
+                    'Content-Type': 'application/json'
                 },
                 onError: (errors) => {
                     console.error('Validation errors:', errors);
@@ -224,6 +225,8 @@ const EmployeeForm = ({ isOpen, onClose, employee = null, mode = 'create' }) => 
                     onClose();
                 },
                 preserveScroll: true,
+                // Add this to ensure the PUT method is used
+                method: 'put',
             });
         }
     };
