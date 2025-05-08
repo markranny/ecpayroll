@@ -277,6 +277,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
             ->name('change-off-schedules.updateStatus');
         Route::delete('/change-off-schedules/{id}', [ChangeOffScheduleController::class, 'destroy'])
             ->name('change-off-schedules.destroy');
+        Route::post('/change-off-schedules/{id}/delete', [ChangeOffScheduleController::class, 'destroy'])
+            ->name('change-off-schedules.destroy-post');
         Route::get('/change-off-schedules/export', [ChangeOffScheduleController::class, 'export'])
             ->name('change-off-schedules.export');
         

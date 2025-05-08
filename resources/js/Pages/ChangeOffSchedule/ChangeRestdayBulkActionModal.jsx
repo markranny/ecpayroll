@@ -59,7 +59,29 @@ const ChangeRestdayBulkActionModal = ({ selectedCount, onClose, onSubmit, userRo
                                             </label>
                                             <label className="inline-flex items-center">
                                                 <input
-                                                
+                                                    type="radio"
+                                                    className="form-radio text-red-600"
+                                                    name="status"
+                                                    value="rejected"
+                                                    checked={status === 'rejected'}
+                                                    onChange={() => setStatus('rejected')}
+                                                />
+                                                <span className="ml-2 text-gray-700">Reject</span>
+                                            </label>
+                                            {userRoles.isSuperAdmin && (
+                                                <label className="inline-flex items-center">
+                                                    <input
+                                                        type="radio"
+                                                        className="form-radio text-purple-600"
+                                                        name="status"
+                                                        value="force_approved"
+                                                        checked={status === 'force_approved'}
+                                                        onChange={() => setStatus('force_approved')}
+                                                    />
+                                                    <span className="ml-2 text-gray-700">Force Approve (Admin Override)</span>
+                                                </label>
+                                            )}
+                                        </div>
                                     </div>
                                     
                                     {/* Warning message for force approval */}

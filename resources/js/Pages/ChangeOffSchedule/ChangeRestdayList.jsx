@@ -1,9 +1,9 @@
-// resources/js/Pages/ChangeOffSchedule/ChangeRestdayList.jsx
 import React, { useState, useEffect } from 'react';
 import { format } from 'date-fns';
 import { Download, Search, X, Filter } from 'lucide-react';
 import ChangeRestdayStatusBadge from './ChangeRestdayStatusBadge';
 import ChangeRestdayDetailModal from './ChangeRestdayDetailModal';
+import ChangeRestdayBulkActionModal from './ChangeRestdayBulkActionModal';
 import ChangeRestdayForceApproveButton from './ChangeRestdayForceApproveButton';
 import { router } from '@inertiajs/react';
 import { toast } from 'react-toastify';
@@ -150,10 +150,28 @@ const ChangeRestdayList = ({
         if (confirm('Are you sure you want to delete this change rest day request?')) {
             setProcessing(true);
             
-            if (typeof onDelete === 'function') {
-                onDelete(id);
-            }
-            setProcessing(false);
+            router.post(route('change-off-schedules.destroy', id), {
+                _method: 'DELETE'  // Method spoofing to simulate DELETE request
+            }, {
+                preserveScroll: true,
+                onSuccess: () => {
+                    toast.success('Change rest day request deleted successfully');
+                    
+                    // Reload using Inertia's reload method
+                    router.reload({
+                        only: ['changeOffs'], // Only reload the changeOffs prop
+                        preserveScroll: true,
+                        onFinish: () => {
+                            setProcessing(false);
+                        }
+                    });
+                },
+                onError: (errors) => {
+                    console.error('Error deleting:', errors);
+                    toast.error('Failed to delete change rest day request');
+                    setProcessing(false);
+                }
+            });
         }
     };
     
@@ -218,19 +236,20 @@ const ChangeRestdayList = ({
         
         router.post(route('change-off-schedules.bulkUpdateStatus'), data, {
             preserveScroll: true,
-            onSuccess: () => {
+            onSuccess: (page) => {
                 setSelectedIds([]);
                 setSelectAll(false);
-                toast.success(`Successfully ${status} ${selectedIds.length} change rest day requests`);
                 
-                // Reload data
-                router.reload({
-                    only: ['changeOffs'],
-                    preserveScroll: true,
-                    onFinish: () => {
-                        setProcessing(false);
-                    }
-                });
+                // Check for message in the page props
+                if (page.props?.flash?.message) {
+                    toast.success(page.props.flash.message);
+                } else {
+                    toast.success(`Successfully ${status} ${selectedIds.length} change rest day requests`);
+                }
+                
+                // Clear selected items and refresh the data
+                handleCloseBulkActionModal();
+                setProcessing(false);
             },
             onError: (errors) => {
                 console.error('Error during bulk update:', errors);
@@ -238,8 +257,6 @@ const ChangeRestdayList = ({
                 setProcessing(false);
             }
         });
-        
-        handleCloseBulkActionModal();
     };
     
     // Export to Excel functionality

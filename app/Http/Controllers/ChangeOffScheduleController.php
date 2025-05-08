@@ -320,32 +320,16 @@ class ChangeOffScheduleController extends Controller
             
             DB::commit();
             
-            $message = "{$successCount} change rest day requests updated successfully." . 
-                    ($failCount > 0 ? " {$failCount} updates failed." : "");
+            $message = "{$successCount} change rest day requests updated successfully.";
+            if ($failCount > 0) {
+                $message .= " {$failCount} updates failed.";
+            }
             
-            $jsonResponse = [
-                'success' => true,
-                'message' => $message,
-                'successCount' => $successCount,
-                'failCount' => $failCount,
-                'errors' => $errors
-            ];
-            
-            session()->flash('json_response', $jsonResponse);
-            
+            // Return Inertia response instead of JSON response
             return redirect()->back()->with('message', $message);
             
         } catch (\Exception $e) {
             DB::rollBack();
-            
-            $jsonResponse = [
-                'success' => false,
-                'message' => 'Error updating change rest day statuses: ' . $e->getMessage(),
-                'errors' => [$e->getMessage()]
-            ];
-            
-            session()->flash('json_response', $jsonResponse);
-            
             return redirect()->back()->with('error', 'Error updating change rest day statuses: ' . $e->getMessage());
         }
     }
@@ -375,46 +359,43 @@ class ChangeOffScheduleController extends Controller
         return $changeOffQuery->orderBy('created_at', 'desc')->get();
     }
 
-    /**
-     * Remove the specified change rest day request.
-     */
     public function destroy($id)
-    {
-        $user = Auth::user();
-        $changeOff = ChangeOffSchedule::findOrFail($id);
-        
-        // Only allow deletion if status is pending and user has permission
-        if ($changeOff->status !== 'pending') {
-            return back()->with('error', 'Only pending change rest day requests can be deleted');
-        }
-        
-        $userRoles = $this->getUserRoles($user);
-        $canDelete = false;
-        
-        // Check permissions
-        if ($userRoles['isSuperAdmin']) {
-            $canDelete = true;
-        } elseif ($changeOff->employee_id === $userRoles['employeeId']) {
-            // Users can delete their own pending requests
-            $canDelete = true;
-        } elseif ($userRoles['isDepartmentManager'] && 
-                in_array($changeOff->employee->Department, $userRoles['managedDepartments'])) {
-            $canDelete = true;
-        } elseif ($userRoles['isHrdManager']) {
-            $canDelete = true;
-        }
-        
-        if (!$canDelete) {
-            return back()->with('error', 'You are not authorized to delete this change rest day request');
-        }
-        
-        try {
-            $changeOff->delete();
-            return back()->with('message', 'Change rest day request deleted successfully');
-        } catch (\Exception $e) {
-            return back()->with('error', 'Failed to delete change rest day request: ' . $e->getMessage());
-        }
+{
+    $user = Auth::user();
+    $changeOff = ChangeOffSchedule::findOrFail($id);
+    
+    // Only allow deletion if status is pending and user has permission
+    if ($changeOff->status !== 'pending') {
+        return back()->with('error', 'Only pending change rest day requests can be deleted');
     }
+    
+    $userRoles = $this->getUserRoles($user);
+    $canDelete = false;
+    
+    // Check permissions
+    if ($userRoles['isSuperAdmin']) {
+        $canDelete = true;
+    } elseif ($changeOff->employee_id === $userRoles['employeeId']) {
+        // Users can delete their own pending requests
+        $canDelete = true;
+    } elseif ($userRoles['isDepartmentManager'] && 
+            in_array($changeOff->employee->Department, $userRoles['managedDepartments'])) {
+        $canDelete = true;
+    } elseif ($userRoles['isHrdManager']) {
+        $canDelete = true;
+    }
+    
+    if (!$canDelete) {
+        return back()->with('error', 'You are not authorized to delete this change rest day request');
+    }
+    
+    try {
+        $changeOff->delete();
+        return back()->with('message', 'Change rest day request deleted successfully');
+    } catch (\Exception $e) {
+        return back()->with('error', 'Failed to delete change rest day request: ' . $e->getMessage());
+    }
+}
 
     /**
      * Export change rest day requests to Excel.
