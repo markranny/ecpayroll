@@ -258,6 +258,17 @@ Route::middleware(['auth', 'verified'])->group(function () {
             ->name('offsets.export');
 
         // Change Off Schedule Routes
+        /* Route::get('/change-off-schedules', [ChangeOffScheduleController::class, 'index'])
+            ->name('change-off-schedules.index');
+        Route::post('/change-off-schedules', [ChangeOffScheduleController::class, 'store'])
+            ->name('change-off-schedules.store');
+        Route::post('/change-off-schedules/{id}/status', [ChangeOffScheduleController::class, 'updateStatus'])
+            ->name('change-off-schedules.updateStatus');
+        Route::delete('/change-off-schedules/{id}', [ChangeOffScheduleController::class, 'destroy'])
+            ->name('change-off-schedules.destroy');
+        Route::get('/change-off-schedules/export', [ChangeOffScheduleController::class, 'export'])
+            ->name('change-off-schedules.export'); */
+
         Route::get('/change-off-schedules', [ChangeOffScheduleController::class, 'index'])
             ->name('change-off-schedules.index');
         Route::post('/change-off-schedules', [ChangeOffScheduleController::class, 'store'])
@@ -268,6 +279,16 @@ Route::middleware(['auth', 'verified'])->group(function () {
             ->name('change-off-schedules.destroy');
         Route::get('/change-off-schedules/export', [ChangeOffScheduleController::class, 'export'])
             ->name('change-off-schedules.export');
+        
+        // Add this bulk update route for Change Off Schedule
+        Route::post('/change-off-schedules/bulk-update', [ChangeOffScheduleController::class, 'bulkUpdateStatus'])
+            ->name('change-off-schedules.bulkUpdateStatus');
+        
+        // Force approve route (superadmin only)
+        Route::middleware('role:superadmin')->group(function () {
+            Route::post('/change-off-schedules/force-approve', [ChangeOffScheduleController::class, 'forceApprove'])
+                ->name('change-off-schedules.force-approve');
+        });
 
         // Time Schedule Routes
         Route::get('/time-schedules', [TimeScheduleController::class, 'index'])

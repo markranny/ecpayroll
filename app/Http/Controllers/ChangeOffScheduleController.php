@@ -1,380 +1,631 @@
 <?php
-// app/Http/Controllers/ChangeOffScheduleController.php
+
 namespace App\Http\Controllers;
 
-use App\Models\Employee;
-use App\Models\ChangeOffSchedule;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Validator;
-use Illuminate\Support\Facades\Log;
-use Carbon\Carbon;
-use Inertia\Inertia;
-
+use App\Models\ChangeOffSchedule;
+use App\Models\Employee;
+use App\Models\DepartmentManager;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Carbon;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use Inertia\Inertia;
 
 class ChangeOffScheduleController extends Controller
 {
     /**
-     * Display the change off schedule management page.
+     * Display a listing of change rest day requests.
      */
-    public function index()
+    public function index(Request $request)
     {
-        $changeOffSchedules = ChangeOffSchedule::with('employee')->latest()->get();
-        $employees = Employee::select(['id', 'idno', 'Lname', 'Fname', 'MName', 'Department', 'Jobtitle'])->get();
-        $departments = Employee::distinct()->pluck('Department')->filter()->values();
+        $user = Auth::user();
+        $userRoles = $this->getUserRoles($user);
         
-        return Inertia::render('ChangeOffSchedule/ChangeOffSchedulePage', [
-            'schedules' => $changeOffSchedules,
+        // Get all departments for filtering
+        $departments = Employee::select('Department')
+            ->distinct()
+            ->whereNotNull('Department')
+            ->orderBy('Department')
+            ->pluck('Department')
+            ->toArray();
+            
+        // Query change off schedules based on user role
+        $changeOffQuery = ChangeOffSchedule::with(['employee', 'approver']);
+        
+        // Filter based on user roles
+        if ($userRoles['isEmployee'] && !$userRoles['isDepartmentManager'] && !$userRoles['isHrdManager'] && !$userRoles['isSuperAdmin']) {
+            // Regular employees can only see their own requests
+            $employeeId = $user->employee ? $user->employee->id : null;
+            if ($employeeId) {
+                $changeOffQuery->where('employee_id', $employeeId);
+            }
+        } elseif ($userRoles['isDepartmentManager'] && !$userRoles['isSuperAdmin']) {
+            // Department managers can see requests from their department
+            $managedDepartments = DepartmentManager::where('manager_id', $user->id)
+                ->pluck('department')
+                ->toArray();
+                
+            $changeOffQuery->whereHas('employee', function($q) use ($managedDepartments) {
+                $q->whereIn('Department', $managedDepartments);
+            });
+        }
+        // HRD managers and superadmins can see all requests
+        
+        // Sort by latest first
+        $changeOffQuery->orderBy('created_at', 'desc');
+        
+        // Get active employees for the form
+        $employees = Employee::where('JobStatus', 'Active')
+            ->orderBy('Lname')
+            ->get();
+            
+        // Check if a specific request is selected for viewing
+        $selectedId = $request->input('selected');
+        $selectedChangeOff = null;
+        
+        if ($selectedId) {
+            $selectedChangeOff = ChangeOffSchedule::with(['employee', 'approver'])
+                ->find($selectedId);
+        }
+        
+        // Get the list of change off requests
+        $changeOffs = $changeOffQuery->get();
+        
+        return inertia('ChangeOffSchedule/ChangeRestdayPage', [
+            'auth' => [
+                'user' => $user,
+            ],
+            'changeOffs' => $changeOffs,
             'employees' => $employees,
             'departments' => $departments,
-            'auth' => [
-                'user' => Auth::user(),
-            ],
+            'selectedChangeOff' => $selectedChangeOff,
+            'userRoles' => $userRoles
         ]);
     }
 
+    private function getUserRoles($user)
+    {
+        // Check department manager directly from database first
+        $isDepartmentManager = DepartmentManager::where('manager_id', $user->id)->exists();
+        
+        // Check if user is an HRD manager
+        $isHrdManager = $this->isHrdManager($user);
+        
+        $userRoles = [
+            'isSuperAdmin' => $user->hasRole('superadmin'),
+            'isHrdManager' => $isHrdManager,
+            'isDepartmentManager' => $isDepartmentManager || $user->hasRole('department_manager'),
+            'isEmployee' => $user->is_employee || ($user->employee && $user->employee->exists()),
+            'userId' => $user->id,
+            'employeeId' => $user->employee ? $user->employee->id : null,
+            'managedDepartments' => [],
+        ];
+        
+        // If user is a department manager, get their managed departments
+        if ($userRoles['isDepartmentManager']) {
+            $userRoles['managedDepartments'] = DepartmentManager::where('manager_id', $user->id)
+                ->pluck('department')
+                ->toArray();
+        }
+        
+        return $userRoles;
+    }
+
     /**
-     * Store a new change off schedule request.
+     * Store a newly created change rest day request.
      */
     public function store(Request $request)
     {
-        Log::info('Change Off Schedule store method called', [
-            'user_id' => Auth::id(),
-            'request_data' => $request->except(['_token'])
-        ]);
-        
-        $validator = Validator::make($request->all(), [
+        $validated = $request->validate([
             'employee_ids' => 'required|array',
-            'employee_ids.*' => 'exists:employees,id',
+            'employee_ids.*' => 'required|integer|exists:employees,id',
             'original_date' => 'required|date',
             'requested_date' => 'required|date|different:original_date',
-            'reason' => 'required|string|max:500',
+            'reason' => 'required|string|max:1000',
         ]);
-
-        if ($validator->fails()) {
-            Log::warning('Change Off Schedule validation failed', [
-                'user_id' => Auth::id(),
-                'errors' => $validator->errors()->toArray()
-            ]);
-            return back()->withErrors($validator)->withInput();
-        }
-
+        
+        $user = Auth::user();
+        $successCount = 0;
+        $errorMessages = [];
+        
+        DB::beginTransaction();
+        
         try {
-            // Check if current user is superadmin or hrd for auto-approval
-            $user = Auth::user();
-            $isAutoApproved = false;
-            $userRole = 'unknown';
-            
-            // Simple role detection based on username and user ID
-            if (stripos($user->name, 'admin') !== false || $user->id === 1) {
-                $userRole = 'superadmin';
-                $isAutoApproved = true;
-            } elseif (stripos($user->name, 'hrd') !== false || stripos($user->email, 'hrd') !== false) {
-                $userRole = 'hrd';
-                $isAutoApproved = true;
-            } else {
-                // If we can't determine the role with certainty, try to use the route
-                $routeName = request()->route() ? request()->route()->getName() : null;
+            foreach ($validated['employee_ids'] as $employeeId) {
+                $employee = Employee::find($employeeId);
                 
-                if ($routeName) {
-                    if (strpos($routeName, 'superadmin.') === 0) {
-                        $userRole = 'superadmin';
-                        $isAutoApproved = true;
-                    } elseif (strpos($routeName, 'hrd.') === 0) {
-                        $userRole = 'hrd';
-                        $isAutoApproved = true;
-                    }
+                if (!$employee) {
+                    $errorMessages[] = "Employee ID $employeeId not found";
+                    continue;
                 }
+                
+                // Check for duplicate change off entries
+                $existingRequest = ChangeOffSchedule::where('employee_id', $employeeId)
+                    ->where('original_date', $validated['original_date'])
+                    ->where('requested_date', $validated['requested_date'])
+                    ->first();
+                
+                if ($existingRequest) {
+                    $errorMessages[] = "Change rest day request for {$employee->Fname} {$employee->Lname} from {$validated['original_date']} to {$validated['requested_date']} already exists";
+                    continue;
+                }
+                
+                $changeOff = new ChangeOffSchedule();
+                $changeOff->employee_id = $employeeId;
+                $changeOff->original_date = $validated['original_date'];
+                $changeOff->requested_date = $validated['requested_date'];
+                $changeOff->reason = $validated['reason'];
+                $changeOff->status = 'pending';
+                
+                $changeOff->save();
+                $successCount++;
             }
             
-            // Provide a default for messaging if no specific role is found
-            $roleForDisplay = $isAutoApproved ? ucfirst($userRole) : 'standard user';
+            DB::commit();
             
-            // Batch create change off schedule records for all selected employees
-            $schedules = [];
-            $employeeCount = count($request->employee_ids);
+            $message = "Successfully created {$successCount} change rest day request(s)";
             
-            foreach ($request->employee_ids as $employeeId) {
-                $schedule = new ChangeOffSchedule([
-                    'employee_id' => $employeeId,
-                    'original_date' => $request->original_date,
-                    'requested_date' => $request->requested_date,
-                    'reason' => $request->reason,
-                    'status' => $isAutoApproved ? 'approved' : 'pending'
+            if (!empty($errorMessages)) {
+                return redirect()->back()->with([
+                    'message' => $message,
+                    'errors' => $errorMessages
                 ]);
-                
-                // If auto-approved, set approver info
-                if ($isAutoApproved) {
-                    $schedule->approved_by = Auth::id();
-                    $schedule->approved_at = now();
-                    $schedule->remarks = "Auto-approved: Filed by {$roleForDisplay}";
-                }
-                
-                $schedule->save();
-                $schedules[] = $schedule;
             }
             
-            // Get updated list of all schedules to return to the frontend
-            $allSchedules = ChangeOffSchedule::with('employee')->latest()->get();
-            
-            $successMessage = $isAutoApproved 
-                ? 'Change Off Schedule requests created and auto-approved successfully' 
-                : 'Change Off Schedule requests created successfully';
-            
-            return redirect()->back()->with([
-                'message' => $successMessage,
-                'schedules' => $allSchedules
-            ]);
+            return redirect()->back()->with('message', $message);
         } catch (\Exception $e) {
-            Log::error('Failed to create change off schedule requests', [
-                'user_id' => Auth::id(),
-                'error_message' => $e->getMessage(),
-                'error_trace' => $e->getTraceAsString(),
-                'request' => $request->all()
-            ]);
-            
-            return redirect()->back()
-                ->with('error', 'Failed to create change off schedule requests: ' . $e->getMessage())
-                ->withInput();
+            DB::rollBack();
+            return redirect()->back()->with('error', 'Error creating change rest day requests: ' . $e->getMessage());
         }
     }
 
     /**
-     * Approve or reject a schedule change request.
+     * Update the status of a change rest day request.
      */
     public function updateStatus(Request $request, $id)
     {
-        $validator = Validator::make($request->all(), [
-            'status' => 'required|in:approved,rejected',
+        $user = Auth::user();
+        $changeOff = ChangeOffSchedule::findOrFail($id);
+        
+        $validated = $request->validate([
+            'status' => 'required|in:approved,rejected,force_approved',
             'remarks' => 'nullable|string|max:500',
         ]);
 
-        if ($validator->fails()) {
-            return redirect()->back()
-                ->withErrors($validator)
-                ->withInput();
+        // Check permission
+        $canUpdate = false;
+        $isForceApproval = $validated['status'] === 'force_approved';
+        
+        $userRoles = $this->getUserRoles($user);
+        
+        // Only superadmin can force approve
+        if ($isForceApproval && $userRoles['isSuperAdmin']) {
+            $canUpdate = true;
+            // Force approval becomes a regular approval but with admin override
+            $validated['status'] = 'approved';
+        }
+        // Department manager can approve/reject for their department
+        elseif ($userRoles['isDepartmentManager'] && 
+            in_array($changeOff->employee->Department, $userRoles['managedDepartments']) &&
+            !$isForceApproval) {
+            $canUpdate = true;
+        }
+        // HRD manager or superadmin can approve/reject any request
+        elseif (($userRoles['isHrdManager'] || $userRoles['isSuperAdmin']) && !$isForceApproval) {
+            $canUpdate = true;
+        }
+
+        if (!$canUpdate) {
+            return response()->json([
+                'message' => 'You are not authorized to update this change rest day request.'
+            ], 403);
         }
 
         try {
-            $schedule = ChangeOffSchedule::findOrFail($id);
-            
-            // Only allow status updates if current status is pending
-            if ($schedule->status !== 'pending') {
-                return redirect()->back()
-                    ->with('error', 'Cannot update schedule change that has already been ' . $schedule->status);
+            // Special case for force approval by superadmin
+            if ($isForceApproval) {
+                $changeOff->remarks = 'Administrative override: ' . ($validated['remarks'] ?? 'Force approved by admin');
+            } else {
+                $changeOff->remarks = $validated['remarks'];
             }
             
-            $schedule->status = $request->status;
-            $schedule->remarks = $request->remarks;
-            $schedule->approved_by = Auth::id();
-            $schedule->approved_at = now();
-            $schedule->save();
+            $changeOff->status = $validated['status'];
+            $changeOff->approved_by = $user->id;
+            $changeOff->approved_at = now();
+            $changeOff->save();
+
+            // Get fresh data
+            $changeOff = ChangeOffSchedule::with(['employee', 'approver'])->find($changeOff->id);
             
-            // Get updated list of all schedules to return to the frontend
-            $allSchedules = ChangeOffSchedule::with('employee')->latest()->get();
-            
-            return redirect()->back()->with([
-                'message' => 'Schedule change status updated successfully',
-                'schedules' => $allSchedules
+            // Get full updated list
+            $changeOffs = $this->getFilteredChangeOffs($user);
+
+            return response()->json([
+                'message' => 'Change rest day status updated successfully.',
+                'changeOff' => $changeOff,
+                'changeOffs' => $changeOffs
             ]);
         } catch (\Exception $e) {
-            Log::error('Failed to update schedule change status', [
-                'id' => $id,
-                'error' => $e->getMessage(),
-                'request' => $request->all()
-            ]);
-            
-            return redirect()->back()
-                ->with('error', 'Failed to update schedule change status: ' . $e->getMessage())
-                ->withInput();
+            return response()->json([
+                'message' => 'Failed to update change rest day status: ' . $e->getMessage()
+            ], 500);
         }
     }
 
     /**
-     * Remove the specified schedule change request.
+     * Bulk update the status of multiple change rest day requests.
+     */
+    public function bulkUpdateStatus(Request $request)
+    {
+        $user = Auth::user();
+        
+        $validated = $request->validate([
+            'change_off_ids' => 'required|array',
+            'change_off_ids.*' => 'required|integer|exists:change_off_schedules,id',
+            'status' => 'required|in:approved,rejected,force_approved',
+            'remarks' => 'nullable|string|max:500',
+        ]);
+        
+        $successCount = 0;
+        $failCount = 0;
+        $errors = [];
+        
+        DB::beginTransaction();
+        
+        try {
+            foreach ($validated['change_off_ids'] as $changeOffId) {
+                $changeOff = ChangeOffSchedule::findOrFail($changeOffId);
+                
+                // Check permission
+                $canUpdate = false;
+                $userRoles = $this->getUserRoles($user);
+                
+                // Force approve option for superadmins
+                if ($validated['status'] === 'force_approved' && $userRoles['isSuperAdmin']) {
+                    $canUpdate = true;
+                }
+                // Department manager can approve/reject for their department
+                elseif ($userRoles['isDepartmentManager'] && 
+                    in_array($changeOff->employee->Department, $userRoles['managedDepartments']) &&
+                    $validated['status'] !== 'force_approved') {
+                    $canUpdate = true;
+                }
+                // HRD manager or superadmin can approve/reject any request
+                elseif (($userRoles['isHrdManager'] || $userRoles['isSuperAdmin']) && 
+                    $validated['status'] !== 'force_approved') {
+                    $canUpdate = true;
+                }
+                
+                if (!$canUpdate) {
+                    $failCount++;
+                    $errors[] = "Not authorized to update change rest day request #{$changeOffId}";
+                    continue;
+                }
+                
+                // Update the status
+                if ($validated['status'] === 'force_approved') {
+                    $changeOff->status = 'approved';
+                    $changeOff->remarks = 'Administrative override: ' . ($validated['remarks'] ?? 'Force approved by admin');
+                } else {
+                    $changeOff->status = $validated['status'];
+                    $changeOff->remarks = $validated['remarks'] ?? 'Bulk ' . $validated['status'];
+                }
+                $changeOff->approved_by = $user->id;
+                $changeOff->approved_at = now();
+                $changeOff->save();
+                $successCount++;
+            }
+            
+            DB::commit();
+            
+            $message = "{$successCount} change rest day requests updated successfully." . 
+                    ($failCount > 0 ? " {$failCount} updates failed." : "");
+            
+            $jsonResponse = [
+                'success' => true,
+                'message' => $message,
+                'successCount' => $successCount,
+                'failCount' => $failCount,
+                'errors' => $errors
+            ];
+            
+            session()->flash('json_response', $jsonResponse);
+            
+            return redirect()->back()->with('message', $message);
+            
+        } catch (\Exception $e) {
+            DB::rollBack();
+            
+            $jsonResponse = [
+                'success' => false,
+                'message' => 'Error updating change rest day statuses: ' . $e->getMessage(),
+                'errors' => [$e->getMessage()]
+            ];
+            
+            session()->flash('json_response', $jsonResponse);
+            
+            return redirect()->back()->with('error', 'Error updating change rest day statuses: ' . $e->getMessage());
+        }
+    }
+
+    private function getFilteredChangeOffs($user)
+    {
+        $userRoles = $this->getUserRoles($user);
+        
+        $changeOffQuery = ChangeOffSchedule::with(['employee', 'approver']);
+        
+        // Filter based on user roles
+        if ($userRoles['isEmployee'] && !$userRoles['isDepartmentManager'] && !$userRoles['isHrdManager'] && !$userRoles['isSuperAdmin']) {
+            $employeeId = $user->employee ? $user->employee->id : null;
+            if ($employeeId) {
+                $changeOffQuery->where('employee_id', $employeeId);
+            }
+        } elseif ($userRoles['isDepartmentManager'] && !$userRoles['isSuperAdmin']) {
+            $managedDepartments = DepartmentManager::where('manager_id', $user->id)
+                ->pluck('department')
+                ->toArray();
+                
+            $changeOffQuery->whereHas('employee', function($q) use ($managedDepartments) {
+                $q->whereIn('Department', $managedDepartments);
+            });
+        }
+        
+        return $changeOffQuery->orderBy('created_at', 'desc')->get();
+    }
+
+    /**
+     * Remove the specified change rest day request.
      */
     public function destroy($id)
     {
+        $user = Auth::user();
+        $changeOff = ChangeOffSchedule::findOrFail($id);
+        
+        // Only allow deletion if status is pending and user has permission
+        if ($changeOff->status !== 'pending') {
+            return back()->with('error', 'Only pending change rest day requests can be deleted');
+        }
+        
+        $userRoles = $this->getUserRoles($user);
+        $canDelete = false;
+        
+        // Check permissions
+        if ($userRoles['isSuperAdmin']) {
+            $canDelete = true;
+        } elseif ($changeOff->employee_id === $userRoles['employeeId']) {
+            // Users can delete their own pending requests
+            $canDelete = true;
+        } elseif ($userRoles['isDepartmentManager'] && 
+                in_array($changeOff->employee->Department, $userRoles['managedDepartments'])) {
+            $canDelete = true;
+        } elseif ($userRoles['isHrdManager']) {
+            $canDelete = true;
+        }
+        
+        if (!$canDelete) {
+            return back()->with('error', 'You are not authorized to delete this change rest day request');
+        }
+        
         try {
-            $schedule = ChangeOffSchedule::findOrFail($id);
-            
-            // Only allow deletion if status is pending
-            if ($schedule->status !== 'pending') {
-                return redirect()->back()
-                    ->with('error', 'Cannot delete schedule change that has already been ' . $schedule->status);
-            }
-            
-            $schedule->delete();
-            
-            // Get updated list of all schedules to return to the frontend
-            $allSchedules = ChangeOffSchedule::with('employee')->latest()->get();
-            
-            return redirect()->back()->with([
-                'message' => 'Schedule change deleted successfully',
-                'schedules' => $allSchedules
-            ]);
+            $changeOff->delete();
+            return back()->with('message', 'Change rest day request deleted successfully');
         } catch (\Exception $e) {
-            Log::error('Failed to delete schedule change', [
-                'id' => $id,
-                'error' => $e->getMessage()
-            ]);
-            
-            return redirect()->back()->with('error', 'Failed to delete schedule change: ' . $e->getMessage());
+            return back()->with('error', 'Failed to delete change rest day request: ' . $e->getMessage());
         }
     }
 
     /**
-     * Export schedule changes to Excel.
+     * Export change rest day requests to Excel.
      */
     public function export(Request $request)
     {
-        try {
-            // Start with a base query
-            $query = ChangeOffSchedule::with('employee', 'approver');
-            
-            // Apply filters if provided
-            if ($request->has('status') && $request->status) {
-                $query->where('status', $request->status);
+        $filterStatus = $request->input('status');
+        $searchTerm = $request->input('search');
+        $fromDate = $request->input('from_date');
+        $toDate = $request->input('to_date');
+        
+        $user = Auth::user();
+        $userRoles = $this->getUserRoles($user);
+        
+        $changeOffQuery = ChangeOffSchedule::with(['employee', 'approver']);
+        
+        // Apply role-based filtering
+        if ($userRoles['isEmployee'] && !$userRoles['isDepartmentManager'] && !$userRoles['isHrdManager'] && !$userRoles['isSuperAdmin']) {
+            $employeeId = $user->employee ? $user->employee->id : null;
+            if ($employeeId) {
+                $changeOffQuery->where('employee_id', $employeeId);
             }
-            
-            if ($request->has('search') && $request->search) {
-                $search = $request->search;
-                $query->where(function($q) use ($search) {
-                    $q->whereHas('employee', function($subQuery) use ($search) {
-                        $subQuery->where('Fname', 'like', "%{$search}%")
-                            ->orWhere('Lname', 'like', "%{$search}%")
-                            ->orWhere('idno', 'like', "%{$search}%")
-                            ->orWhere('Department', 'like', "%{$search}%");
-                    })
-                    ->orWhere('reason', 'like', "%{$search}%");
-                });
-            }
-            
-            if ($request->has('from_date') && $request->from_date) {
-                $query->whereDate('requested_date', '>=', $request->from_date);
-            }
-            
-            if ($request->has('to_date') && $request->to_date) {
-                $query->whereDate('requested_date', '<=', $request->to_date);
-            }
-            
-            // Get the filtered schedule changes
-            $schedules = $query->latest()->get();
-            
-            // Create a spreadsheet
-            $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
-            $sheet = $spreadsheet->getActiveSheet();
-            
-            // Set headers
-            $sheet->setCellValue('A1', 'ID');
-            $sheet->setCellValue('B1', 'Employee ID');
-            $sheet->setCellValue('C1', 'Employee Name');
-            $sheet->setCellValue('D1', 'Department');
-            $sheet->setCellValue('E1', 'Position');
-            $sheet->setCellValue('F1', 'Original Date');
-            $sheet->setCellValue('G1', 'Requested Date');
-            $sheet->setCellValue('H1', 'Status');
-            $sheet->setCellValue('I1', 'Reason');
-            $sheet->setCellValue('J1', 'Remarks');
-            $sheet->setCellValue('K1', 'Filed Date');
-            $sheet->setCellValue('L1', 'Action Date');
-            $sheet->setCellValue('M1', 'Approved/Rejected By');
-            
-            // Style headers
-            $headerStyle = [
-                'font' => [
-                    'bold' => true,
-                    'color' => ['rgb' => 'FFFFFF'],
-                ],
-                'fill' => [
-                    'fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID,
-                    'startColor' => ['rgb' => '4472C4'],
-                ],
-                'borders' => [
-                    'allBorders' => [
-                        'borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN,
-                    ],
-                ],
-            ];
-            
-            $sheet->getStyle('A1:M1')->applyFromArray($headerStyle);
-            
-            // Auto-adjust column width
-            foreach(range('A', 'M') as $column) {
-                $sheet->getColumnDimension($column)->setAutoSize(true);
-            }
-            
-            // Fill data
-            $row = 2;
-            foreach ($schedules as $schedule) {
-                $sheet->setCellValue('A' . $row, $schedule->id);
-                $sheet->setCellValue('B' . $row, $schedule->employee->idno ?? 'N/A');
-                $sheet->setCellValue('C' . $row, $schedule->employee ? "{$schedule->employee->Lname}, {$schedule->employee->Fname} {$schedule->employee->MName}" : 'Unknown');
-                $sheet->setCellValue('D' . $row, $schedule->employee->Department ?? 'N/A');
-                $sheet->setCellValue('E' . $row, $schedule->employee->Jobtitle ?? 'N/A');
-                $sheet->setCellValue('F' . $row, $schedule->original_date ? Carbon::parse($schedule->original_date)->format('Y-m-d') : 'N/A');
-                $sheet->setCellValue('G' . $row, $schedule->requested_date ? Carbon::parse($schedule->requested_date)->format('Y-m-d') : 'N/A');
-                $sheet->setCellValue('H' . $row, ucfirst($schedule->status));
-                $sheet->setCellValue('I' . $row, $schedule->reason ?? 'N/A');
-                $sheet->setCellValue('J' . $row, $schedule->remarks ?? 'N/A');
-                $sheet->setCellValue('K' . $row, $schedule->created_at ? Carbon::parse($schedule->created_at)->format('Y-m-d h:i A') : 'N/A');
-                $sheet->setCellValue('L' . $row, $schedule->approved_at ? Carbon::parse($schedule->approved_at)->format('Y-m-d h:i A') : 'N/A');
-                $sheet->setCellValue('M' . $row, $schedule->approver ? $schedule->approver->name : 'N/A');
+        } elseif ($userRoles['isDepartmentManager'] && !$userRoles['isSuperAdmin']) {
+            $managedDepartments = DepartmentManager::where('manager_id', $user->id)
+                ->pluck('department')
+                ->toArray();
                 
-                // Apply status-based styling
-                if ($schedule->status === 'approved') {
-                    $sheet->getStyle('H' . $row)->applyFromArray([
-                        'font' => ['color' => ['rgb' => '008000']], // Green for approved
-                    ]);
-                } elseif ($schedule->status === 'rejected') {
-                    $sheet->getStyle('H' . $row)->applyFromArray([
-                        'font' => ['color' => ['rgb' => 'FF0000']], // Red for rejected
-                    ]);
-                } elseif ($schedule->status === 'pending') {
-                    $sheet->getStyle('H' . $row)->applyFromArray([
-                        'font' => ['color' => ['rgb' => 'FFA500']], // Orange for pending
-                    ]);
+            $changeOffQuery->whereHas('employee', function($q) use ($managedDepartments) {
+                $q->whereIn('Department', $managedDepartments);
+            });
+        }
+        
+        // Apply filters
+        if ($filterStatus) {
+            $changeOffQuery->where('status', $filterStatus);
+        }
+        
+        if ($searchTerm) {
+            $changeOffQuery->where(function($query) use ($searchTerm) {
+                $query->whereHas('employee', function($q) use ($searchTerm) {
+                    $q->where('Fname', 'like', "%{$searchTerm}%")
+                      ->orWhere('Lname', 'like', "%{$searchTerm}%")
+                      ->orWhere('idno', 'like', "%{$searchTerm}%")
+                      ->orWhere('Department', 'like', "%{$searchTerm}%");
+                })
+                ->orWhere('reason', 'like', "%{$searchTerm}%");
+            });
+        }
+        
+        if ($fromDate) {
+            $changeOffQuery->whereDate('original_date', '>=', $fromDate);
+        }
+        
+        if ($toDate) {
+            $changeOffQuery->whereDate('original_date', '<=', $toDate);
+        }
+        
+        $changeOffs = $changeOffQuery->orderBy('created_at', 'desc')->get();
+        
+        // Create Excel file
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        
+        // Set headers
+        $sheet->setCellValue('A1', 'ID');
+        $sheet->setCellValue('B1', 'Employee ID');
+        $sheet->setCellValue('C1', 'Employee Name');
+        $sheet->setCellValue('D1', 'Department');
+        $sheet->setCellValue('E1', 'Original Rest Day');
+        $sheet->setCellValue('F1', 'Requested Rest Day');
+        $sheet->setCellValue('G1', 'Reason');
+        $sheet->setCellValue('H1', 'Status');
+        $sheet->setCellValue('I1', 'Approved By');
+        $sheet->setCellValue('J1', 'Approved Date');
+        $sheet->setCellValue('K1', 'Remarks');
+        $sheet->setCellValue('L1', 'Created Date');
+        
+        // Add data
+        $row = 2;
+        foreach ($changeOffs as $changeOff) {
+            $sheet->setCellValue('A' . $row, $changeOff->id);
+            $sheet->setCellValue('B' . $row, $changeOff->employee ? $changeOff->employee->idno : '');
+            $sheet->setCellValue('C' . $row, $changeOff->employee ? $changeOff->employee->Lname . ', ' . $changeOff->employee->Fname : '');
+            $sheet->setCellValue('D' . $row, $changeOff->employee ? $changeOff->employee->Department : '');
+            $sheet->setCellValue('E' . $row, $changeOff->original_date ? Carbon::parse($changeOff->original_date)->format('Y-m-d') : '');
+            $sheet->setCellValue('F' . $row, $changeOff->requested_date ? Carbon::parse($changeOff->requested_date)->format('Y-m-d') : '');
+            $sheet->setCellValue('G' . $row, $changeOff->reason);
+            $sheet->setCellValue('H' . $row, ucfirst($changeOff->status));
+            $sheet->setCellValue('I' . $row, $changeOff->approver ? $changeOff->approver->name : '');
+            $sheet->setCellValue('J' . $row, $changeOff->approved_at ? Carbon::parse($changeOff->approved_at)->format('Y-m-d H:i:s') : '');
+            $sheet->setCellValue('K' . $row, $changeOff->remarks);
+            $sheet->setCellValue('L' . $row, $changeOff->created_at ? Carbon::parse($changeOff->created_at)->format('Y-m-d H:i:s') : '');
+            $row++;
+        }
+        
+        // Auto-size columns
+        foreach (range('A', 'L') as $column) {
+            $sheet->getColumnDimension($column)->setAutoSize(true);
+        }
+        
+        // Create writer and save
+        $writer = new Xlsx($spreadsheet);
+        $filename = 'Change_Rest_Day_' . date('Y-m-d_H-i-s') . '.xlsx';
+        
+        $tempFile = tempnam(sys_get_temp_dir(), 'changeoff_export_');
+        $writer->save($tempFile);
+        
+        return response()->download($tempFile, $filename, [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ])->deleteFileAfterSend(true);
+    }
+
+    /**
+     * Force approve change rest day requests (admin only).
+     */
+    public function forceApprove(Request $request)
+    {
+        // Ensure only superadmins can force approve
+        if (!$this->isSuperAdmin(Auth::user())) {
+            return back()->with('error', 'Only administrators can force approve change rest day requests.');
+        }
+        
+        $validated = $request->validate([
+            'change_off_ids' => 'required|array',
+            'change_off_ids.*' => 'required|integer|exists:change_off_schedules,id',
+            'remarks' => 'nullable|string|max:500',
+        ]);
+        
+        $user = Auth::user();
+        $remarks = $validated['remarks'] ?? 'Administrative override: Force approved by admin';
+        $successCount = 0;
+        $failCount = 0;
+        $errors = [];
+        
+        // Log the force approval action
+        \Log::info('Force approval of change rest day initiated', [
+            'admin_id' => $user->id,
+            'admin_name' => $user->name,
+            'count' => count($validated['change_off_ids'])
+        ]);
+        
+        foreach ($validated['change_off_ids'] as $changeOffId) {
+            try {
+                $changeOff = ChangeOffSchedule::findOrFail($changeOffId);
+                
+                // Skip already approved changes
+                if ($changeOff->status === 'approved') {
+                    $errors[] = "Change rest day #{$changeOffId} is already approved";
+                    $failCount++;
+                    continue;
                 }
                 
-                $row++;
-            }
-            
-            // Add borders to all data cells
-            $lastRow = $row - 1;
-            if ($lastRow >= 2) {
-                $sheet->getStyle('A2:M' . $lastRow)->applyFromArray([
-                    'borders' => [
-                        'allBorders' => [
-                            'borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN,
-                        ],
-                    ],
+                // Force approve
+                $changeOff->status = 'approved';
+                $changeOff->approved_by = $user->id;
+                $changeOff->approved_at = now();
+                $changeOff->remarks = 'Administrative override: ' . $remarks;
+                $changeOff->save();
+                
+                $successCount++;
+                
+                // Log individual approvals
+                \Log::info("Force approved change rest day #{$changeOffId}", [
+                    'admin_id' => $user->id,
+                    'change_off_id' => $changeOffId,
+                    'previous_status' => $changeOff->getOriginal('status')
                 ]);
+            } catch (\Exception $e) {
+                \Log::error("Error force approving change rest day #{$changeOffId}: " . $e->getMessage());
+                $failCount++;
+                $errors[] = "Error force approving change rest day #{$changeOffId}: " . $e->getMessage();
             }
-            
-            // Set the filename
-            $filename = 'Change_Off_Schedule_Report_' . Carbon::now()->format('Y-m-d_His') . '.xlsx';
-            
-            // Create the Excel file
-            $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($spreadsheet);
-            
-            // Set header information for download
-            header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-            header('Content-Disposition: attachment;filename="' . $filename . '"');
-            header('Cache-Control: max-age=0');
-            
-            // Save file to php://output
-            $writer->save('php://output');
-            exit;
-            
-        } catch (\Exception $e) {
-            Log::error('Failed to export change off schedule data', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-            
-            return redirect()->back()->with('error', 'Failed to export change off schedule data: ' . $e->getMessage());
         }
+        
+        // Create appropriate flash message
+        $message = "{$successCount} change rest day requests force approved successfully.";
+        if ($failCount > 0) {
+            $message .= " {$failCount} force approvals failed.";
+        }
+        
+        // Return with message
+        return back()->with('message', $message);
+    }
+
+    private function isSuperAdmin($user)
+    {
+        if (method_exists($user, 'roles') && $user->roles && $user->roles->count() > 0) {
+            if ($user->roles->contains('name', 'superadmin') || $user->roles->contains('slug', 'superadmin')) {
+                return true;
+            }
+        }
+        
+        if (method_exists($user, 'hasRole') && $user->hasRole('superadmin')) {
+            return true;
+        }
+        
+        return false;
+    }
+
+    private function isHrdManager($user)
+    {
+        if (method_exists($user, 'roles') && $user->roles && $user->roles->count() > 0) {
+            if ($user->roles->contains('name', 'hrd_manager') || $user->roles->contains('slug', 'hrd')) {
+                return true;
+            }
+        }
+        
+        if (method_exists($user, 'hasRole') && $user->hasRole('hrd_manager')) {
+            return true;
+        }
+        
+        return false;
     }
 }
