@@ -210,12 +210,13 @@ const EmployeeForm = ({ isOpen, onClose, employee = null, mode = 'create' }) => 
                 return;
             }
             
-            // Use the route with the employee ID - FIX: use proper model binding
-            router.put(`/employees/${employee.id}`, processedData, {
-                headers: {
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json'
-                },
+            // Use POST with method override for PUT
+            router.post(`/employees/${employee.id}`, {
+                ...processedData,
+                _method: 'PUT'  // This tells Laravel to treat this as a PUT request
+            }, {
+                preserveState: true,
+                preserveScroll: true,
                 onError: (errors) => {
                     console.error('Validation errors:', errors);
                     setErrors(errors);
@@ -224,9 +225,6 @@ const EmployeeForm = ({ isOpen, onClose, employee = null, mode = 'create' }) => 
                     console.log('Employee updated successfully');
                     onClose();
                 },
-                preserveScroll: true,
-                // Add this to ensure the PUT method is used
-                method: 'put',
             });
         }
     };
