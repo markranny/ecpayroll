@@ -44,6 +44,7 @@
         "react-toastify": "^11.0.5",
         "react-window": "^1.8.11",
         "shadcn-ui": "^0.9.4",
+        "styled-jsx": "^5.1.7",
         "sweetalert2": "^11.21.0",
         "tailwind-merge": "^2.6.0",
         "tailwindcss-animate": "^1.0.7",

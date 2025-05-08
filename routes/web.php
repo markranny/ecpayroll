@@ -34,6 +34,7 @@ use App\Http\Controllers\SectionController;
 use App\Http\Controllers\TrainingsController;
 use App\Http\Controllers\MeetingsController; 
 use App\Http\Controllers\EventsController; 
+use App\Http\Controllers\HrCalendarController;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Auth;
