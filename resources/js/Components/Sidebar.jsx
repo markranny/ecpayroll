@@ -254,12 +254,12 @@ const Sidebar = ({ showSidebar = true }) => {
             label: 'Payroll',
             allowedRoles: ['superadmin', 'finance'],
             items: [
-                { label: 'Salary Lists', path: '/payroll/salary' },
-                { label: 'Contribution Lists', path: '/payroll/contributions' },
+                { label: 'Benefits', path: '/benefits' }
+                /* { label: 'Contribution Lists', path: '/payroll/contributions' },
                 { label: 'Deduction Lists', path: '/payroll/deductions' },
                 { label: 'Debit Summary', path: '/payroll/debit' },
                 { label: 'Credit Summary', path: '/payroll/credit' },
-                { label: 'SLVL Summary', path: '/payroll/slvl' }
+                { label: 'SLVL Summary', path: '/payroll/slvl' } */
             ]
         },
         {
@@ -346,10 +346,10 @@ const Sidebar = ({ showSidebar = true }) => {
         
         {
             icon: Radio,
-            label: 'OFFLINE',
+            label: 'LIVE SYSTEM',
             path: 'http://26.126.108.183:8888',
             allowedRoles: ['superadmin', 'hrd_manager', 'department_manager', 'finance', 'employee'],
-            isLive: false 
+            isLive: true 
         }
     ];
 

@@ -100,7 +100,7 @@ export default function Welcome({ auth, systemVersion }) {
         <div className="relative min-h-screen bg-gradient-to-br from-gray-50 via-gray-100 to-white dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 transition-all duration-500 overflow-hidden">
             <CircleBackground />
             
-            {showWelcome && (
+            {/* {showWelcome && (
                 <Alert 
                     className="fixed top-4 right-4 w-96 bg-gradient-to-r from-blue-500 to-indigo-600 text-white animate-slide-in-right z-50"
                 >
@@ -110,7 +110,7 @@ export default function Welcome({ auth, systemVersion }) {
                     </AlertDescription>
                 </Alert>
 
-            )}
+            )} */}
 
             <div className="relative z-10 mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
                 <header className="flex items-center justify-between py-8 animate-fade-in">

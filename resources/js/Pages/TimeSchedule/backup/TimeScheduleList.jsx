@@ -1,27 +1,18 @@
-import React, { useState, useEffect } from 'react';
+// resources/js/Pages/TimeSchedule/TimeScheduleList.jsx
+import React, { useState, useEffect, useRef } from 'react';
 import { format } from 'date-fns';
-import { Download, Search, X, Filter } from 'lucide-react';
+import { Download, Search, X } from 'lucide-react';
 import TimeScheduleStatusBadge from './TimeScheduleStatusBadge';
 import TimeScheduleDetailModal from './TimeScheduleDetailModal';
-import TimeScheduleBulkActionModal from './TimeScheduleBulkActionModal';
-import TimeScheduleForceApproveButton from './TimeScheduleForceApproveButton';
-import { router } from '@inertiajs/react';
-import { toast } from 'react-toastify';
+import MultiBulkActionModal from '../Overtime/MultiBulkActionModal';
 
-const TimeScheduleList = ({ 
-    timeSchedules, 
-    onStatusUpdate, 
-    onDelete, 
-    userRoles = {}
-}) => {
-    const [selectedTimeSchedule, setSelectedTimeSchedule] = useState(null);
+const TimeScheduleList = ({ scheduleChanges, onStatusUpdate, onDelete, refreshInterval = 5000 }) => {
+    const [selectedScheduleChange, setSelectedScheduleChange] = useState(null);
     const [showModal, setShowModal] = useState(false);
     const [filterStatus, setFilterStatus] = useState('');
-    const [filteredTimeSchedules, setFilteredTimeSchedules] = useState(timeSchedules || []);
-    const [localTimeSchedules, setLocalTimeSchedules] = useState(timeSchedules || []);
-    
-    // Add processing state
-    const [processing, setProcessing] = useState(false);
+    const [filteredScheduleChanges, setFilteredScheduleChanges] = useState(scheduleChanges || []);
+    const [localScheduleChanges, setLocalScheduleChanges] = useState(scheduleChanges || []);
+    const timerRef = useRef(null);
     
     // Search functionality
     const [searchTerm, setSearchTerm] = useState('');
@@ -34,10 +25,36 @@ const TimeScheduleList = ({
     
     // Update local state when props change
     useEffect(() => {
-        if (!timeSchedules) return;
-        setLocalTimeSchedules(timeSchedules);
-        applyFilters(timeSchedules, filterStatus, searchTerm, dateRange);
-    }, [timeSchedules]);
+        setLocalScheduleChanges(scheduleChanges || []);
+        applyFilters(scheduleChanges || [], filterStatus, searchTerm, dateRange);
+    }, [scheduleChanges]);
+    
+    // Set up auto-refresh timer
+    useEffect(() => {
+        // Function to fetch fresh data
+        const refreshData = async () => {
+            try {
+                // Here you would typically fetch fresh data from your API
+                if (typeof window.refreshTimeSchedules === 'function') {
+                    const freshData = await window.refreshTimeSchedules();
+                    setLocalScheduleChanges(freshData);
+                    applyFilters(freshData, filterStatus, searchTerm, dateRange);
+                }
+            } catch (error) {
+                console.error('Error refreshing schedule change data:', error);
+            }
+        };
+        
+        // Set up interval
+        timerRef.current = setInterval(refreshData, refreshInterval);
+        
+        // Clean up on component unmount
+        return () => {
+            if (timerRef.current) {
+                clearInterval(timerRef.current);
+            }
+        };
+    }, [refreshInterval, filterStatus, searchTerm, dateRange]);
     
     // Function to apply all filters
     const applyFilters = (data, status, search, dates) => {
@@ -45,79 +62,78 @@ const TimeScheduleList = ({
         
         // Apply status filter
         if (status) {
-            result = result.filter(ts => ts.status === status);
+            result = result.filter(sc => sc.status === status);
         }
         
         // Apply search filter
         if (search) {
             const searchLower = search.toLowerCase();
-            result = result.filter(ts => 
+            result = result.filter(sc => 
                 // Search by employee name
-                (ts.employee && 
-                    ((ts.employee.Fname && ts.employee.Fname.toLowerCase().includes(searchLower)) || 
-                     (ts.employee.Lname && ts.employee.Lname.toLowerCase().includes(searchLower)))) ||
+                (sc.employee && 
+                    ((sc.employee.Fname && sc.employee.Fname.toLowerCase().includes(searchLower)) || 
+                     (sc.employee.Lname && sc.employee.Lname.toLowerCase().includes(searchLower)))) ||
                 // Search by employee ID
-                (ts.employee && ts.employee.idno && ts.employee.idno.toString().includes(searchLower)) ||
+                (sc.employee && sc.employee.idno && sc.employee.idno.toString().includes(searchLower)) ||
                 // Search by department
-                (ts.employee && ts.employee.Department && ts.employee.Department.toLowerCase().includes(searchLower)) ||
+                (sc.employee && sc.employee.Department && sc.employee.Department.toLowerCase().includes(searchLower)) ||
                 // Search by reason
-                (ts.reason && ts.reason.toLowerCase().includes(searchLower)) ||
-                // Search by schedule name
-                (ts.new_schedule && ts.new_schedule.toLowerCase().includes(searchLower))
+                (sc.reason && sc.reason.toLowerCase().includes(searchLower)) ||
+                // Search by schedule type
+                (sc.schedule_type && sc.schedule_type.name && sc.schedule_type.name.toLowerCase().includes(searchLower))
             );
         }
         
         // Apply date range filter
         if (dates.from && dates.to) {
-            result = result.filter(ts => {
-                if (!ts.effective_date) return false;
-                const effectiveDate = new Date(ts.effective_date);
+            result = result.filter(sc => {
+                if (!sc.effective_date) return false;
+                const effectiveDate = new Date(sc.effective_date);
                 const fromDate = new Date(dates.from);
                 const toDate = new Date(dates.to);
-                toDate.setHours(23, 59, 59);
+                toDate.setHours(23, 59, 59); // Include the entire "to" day
                 
                 return effectiveDate >= fromDate && effectiveDate <= toDate;
             });
         } else if (dates.from) {
-            result = result.filter(ts => {
-                if (!ts.effective_date) return false;
-                const effectiveDate = new Date(ts.effective_date);
+            result = result.filter(sc => {
+                if (!sc.effective_date) return false;
+                const effectiveDate = new Date(sc.effective_date);
                 const fromDate = new Date(dates.from);
                 return effectiveDate >= fromDate;
             });
         } else if (dates.to) {
-            result = result.filter(ts => {
-                if (!ts.effective_date) return false;
-                const effectiveDate = new Date(ts.effective_date);
+            result = result.filter(sc => {
+                if (!sc.effective_date) return false;
+                const effectiveDate = new Date(sc.effective_date);
                 const toDate = new Date(dates.to);
-                toDate.setHours(23, 59, 59);
+                toDate.setHours(23, 59, 59); // Include the entire "to" day
                 return effectiveDate <= toDate;
             });
         }
         
-        setFilteredTimeSchedules(result);
-        return result;
+        setFilteredScheduleChanges(result);
     };
     
     // Handle status filter change
     const handleStatusFilterChange = (e) => {
         const status = e.target.value;
         setFilterStatus(status);
-        applyFilters(localTimeSchedules, status, searchTerm, dateRange);
+        applyFilters(localScheduleChanges, status, searchTerm, dateRange);
     };
     
     // Handle search input change
     const handleSearchChange = (e) => {
         const value = e.target.value;
         setSearchTerm(value);
-        applyFilters(localTimeSchedules, filterStatus, value, dateRange);
+        applyFilters(localScheduleChanges, filterStatus, value, dateRange);
     };
     
     // Handle date range changes
     const handleDateRangeChange = (field, value) => {
         const newDateRange = { ...dateRange, [field]: value };
         setDateRange(newDateRange);
-        applyFilters(localTimeSchedules, filterStatus, searchTerm, newDateRange);
+        applyFilters(localScheduleChanges, filterStatus, searchTerm, newDateRange);
     };
     
     // Clear all filters
@@ -125,62 +141,58 @@ const TimeScheduleList = ({
         setFilterStatus('');
         setSearchTerm('');
         setDateRange({ from: '', to: '' });
-        applyFilters(localTimeSchedules, '', '', { from: '', to: '' });
+        applyFilters(localScheduleChanges, '', '', { from: '', to: '' });
     };
     
     // Open detail modal
-    const handleViewDetail = (timeSchedule) => {
-        setSelectedTimeSchedule(timeSchedule);
+    const handleViewDetail = (scheduleChange) => {
+        // Pause auto-refresh when modal is open
+        if (timerRef.current) {
+            clearInterval(timerRef.current);
+        }
+        
+        setSelectedScheduleChange(scheduleChange);
         setShowModal(true);
     };
     
     // Close detail modal
     const handleCloseModal = () => {
         setShowModal(false);
-        setSelectedTimeSchedule(null);
+        setSelectedScheduleChange(null);
+        
+        // Resume auto-refresh when modal is closed
+        const refreshData = async () => {
+            try {
+                if (typeof window.refreshTimeSchedules === 'function') {
+                    const freshData = await window.refreshTimeSchedules();
+                    setLocalScheduleChanges(freshData);
+                    applyFilters(freshData, filterStatus, searchTerm, dateRange);
+                }
+            } catch (error) {
+                console.error('Error refreshing schedule change data:', error);
+            }
+        };
+        
+        timerRef.current = setInterval(refreshData, refreshInterval);
     };
     
     // Handle status update (from modal)
     const handleStatusUpdate = (id, data) => {
+        // Check if onStatusUpdate is a function before calling it
         if (typeof onStatusUpdate === 'function') {
+            // Pass the entire data object to the parent component
             onStatusUpdate(id, data);
+        } else {
+            console.error('onStatusUpdate prop is not a function');
+            alert('Error: Unable to update status. Please refresh the page and try again.');
         }
         handleCloseModal();
     };
     
+    // Handle schedule change deletion
     const handleDelete = (id) => {
-        if (confirm('Are you sure you want to delete this time schedule change request?')) {
-            setProcessing(true);
-            
-            router.post(route('time-schedules.destroy', id), {
-                _method: 'DELETE'
-            }, {
-                preserveScroll: true,
-                onSuccess: () => {
-                    toast.success('Time schedule change request deleted successfully');
-                    
-                    // Update the local state instead of reloading the page
-                    const updatedLocalTimeSchedules = localTimeSchedules.filter(item => item.id !== id);
-                    setLocalTimeSchedules(updatedLocalTimeSchedules);
-                    
-                    // Also update filtered time schedules
-                    setFilteredTimeSchedules(prev => prev.filter(item => item.id !== id));
-                    
-                    // Clear selection if the deleted item was selected
-                    if (selectedIds.includes(id)) {
-                        setSelectedIds(prev => prev.filter(itemId => itemId !== id));
-                    }
-                    
-                    setProcessing(false);
-                },
-                onError: (errors) => {
-                    console.error('Error deleting:', errors);
-                    toast.error('Failed to delete time schedule change request');
-                    setProcessing(false);
-                }
-            });
-        }
-    }
+        onDelete(id);
+    };
     
     // Format date safely
     const formatDate = (dateString) => {
@@ -191,20 +203,14 @@ const TimeScheduleList = ({
             return 'Invalid date';
         }
     };
-
+    
     // Format time safely
     const formatTime = (timeString) => {
         try {
             return format(new Date(timeString), 'h:mm a');
         } catch (error) {
-            try {
-                // Try alternative parsing for time-only strings
-                const today = new Date().toISOString().split('T')[0];
-                return format(new Date(`${today}T${timeString}`), 'h:mm a');
-            } catch (error) {
-                console.error('Error formatting time:', error);
-                return timeString || 'N/A';
-            }
+            console.error('Error formatting time:', error);
+            return 'Invalid time';
         }
     };
 
@@ -212,15 +218,11 @@ const TimeScheduleList = ({
     const toggleSelectAll = () => {
         setSelectAll(!selectAll);
         if (!selectAll) {
-            let selectableIds = [];
-            
-            if (userRoles.isDepartmentManager || userRoles.isHrdManager || userRoles.isSuperAdmin) {
-                selectableIds = filteredTimeSchedules
-                    .filter(ts => ts.status === 'pending')
-                    .map(ts => ts.id);
-            }
-            
-            setSelectedIds(selectableIds);
+            // Only select pending schedule changes
+            const pendingIds = filteredScheduleChanges
+                .filter(sc => sc.status === 'pending')
+                .map(sc => sc.id);
+            setSelectedIds(pendingIds);
         } else {
             setSelectedIds([]);
         }
@@ -238,7 +240,7 @@ const TimeScheduleList = ({
 
     const handleOpenBulkActionModal = () => {
         if (selectedIds.length === 0) {
-            alert('Please select at least one time schedule change request');
+            alert('Please select at least one schedule change request');
             return;
         }
         setShowBulkActionModal(true);
@@ -249,65 +251,36 @@ const TimeScheduleList = ({
     };
 
     const handleBulkStatusUpdate = (status, remarks) => {
-        setProcessing(true);
-        
-        const data = {
-            time_schedule_ids: selectedIds,
-            status: status,
-            remarks: remarks
-        };
-        
-        router.post(route('time-schedules.bulkUpdateStatus'), data, {
-            preserveScroll: true,
-            onSuccess: (page) => {
-                // Update local state instead of reloading the page
-                const updatedTimeSchedules = localTimeSchedules.map(item => {
-                    if (selectedIds.includes(item.id)) {
-                        return {
-                            ...item,
-                            status: status,
-                            remarks: remarks,
-                            approved_at: new Date().toISOString(),
-                            approver: page.props?.auth?.user ? {
-                                id: page.props.auth.user.id,
-                                name: page.props.auth.user.name
-                            } : null
-                        };
+        if (typeof onStatusUpdate === 'function') {
+            // Create a promise array for all updates
+            const updatePromises = selectedIds.map(id => {
+                return new Promise((resolve, reject) => {
+                    try {
+                        onStatusUpdate(id, { status, remarks });
+                        resolve();
+                    } catch (error) {
+                        reject(error);
                     }
-                    return item;
                 });
-                
-                // Update both local and filtered states
-                setLocalTimeSchedules(updatedTimeSchedules);
-                
-                // Re-apply current filters to the updated data
-                applyFilters(updatedTimeSchedules, filterStatus, searchTerm, dateRange);
-                
-                // Show success message
-                if (page.props?.flash?.message) {
-                    toast.success(page.props.flash.message);
-                } else {
-                    toast.success(`Successfully ${status} ${selectedIds.length} time schedule change requests`);
-                }
-                
-                // Clear selected items
-                setSelectedIds([]);
-                setSelectAll(false);
-                
-                // Close modal and reset processing state
-                handleCloseBulkActionModal();
-                setProcessing(false);
-            },
-            onError: (errors) => {
-                console.error('Error during bulk update:', errors);
-                toast.error('Failed to update time schedule change requests');
-                setProcessing(false);
-            }
-        });
-    }
+            });
+
+            // Execute all updates
+            Promise.all(updatePromises)
+                .then(() => {
+                    // Clear selections after successful update
+                    setSelectedIds([]);
+                    setSelectAll(false);
+                })
+                .catch(error => {
+                    console.error('Error during bulk update:', error);
+                });
+        }
+        handleCloseBulkActionModal();
+    };
     
     // Export to Excel functionality
     const exportToExcel = () => {
+        // Build query parameters from current filters
         const queryParams = new URLSearchParams();
         
         if (filterStatus) {
@@ -326,28 +299,21 @@ const TimeScheduleList = ({
             queryParams.append('to_date', dateRange.to);
         }
         
+        // Generate the export URL with the current filters
         const exportUrl = `/time-schedules/export?${queryParams.toString()}`;
+        
+        // Open the URL in a new tab/window to download the file
         window.open(exportUrl, '_blank');
     };
 
-    const canSelectTimeSchedule = (timeSchedule) => {
-        if (userRoles.isSuperAdmin || userRoles.isHrdManager) {
-            return timeSchedule.status === 'pending';
-        } else if (userRoles.isDepartmentManager) {
-            return timeSchedule.status === 'pending' && 
-                   userRoles.managedDepartments?.includes(timeSchedule.employee?.Department);
-        }
-        return false;
-    };
-
-    // Get selectable items count
-    const selectableItemsCount = filteredTimeSchedules.filter(ts => canSelectTimeSchedule(ts)).length;
+    // Get count of selectable (pending) items
+    const pendingItemsCount = filteredScheduleChanges.filter(sc => sc.status === 'pending').length;
 
     return (
         <div className="bg-white shadow-md rounded-lg overflow-hidden flex flex-col h-[62vh]">
             <div className="p-4 border-b">
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center space-y-4 md:space-y-0">
-                    <h3 className="text-lg font-semibold">Time Schedule Change Requests</h3>
+                    <h3 className="text-lg font-semibold">Schedule Change Requests</h3>
                     
                     <div className="flex flex-wrap gap-2 w-full md:w-auto">
                         {/* Export Button */}
@@ -359,21 +325,12 @@ const TimeScheduleList = ({
                             <Download className="h-4 w-4 mr-1" />
                             Export
                         </button>
-
-                        {/* Force Approve Button - Only visible for SuperAdmin */}
-                        {userRoles.isSuperAdmin && (
-                            <TimeScheduleForceApproveButton 
-                                selectedIds={selectedIds} 
-                                disabled={processing}
-                            />
-                        )}
                         
                         {/* Bulk Action Button */}
                         {selectedIds.length > 0 && (
                             <button
                                 onClick={handleOpenBulkActionModal}
                                 className="px-3 py-1 bg-indigo-600 text-white rounded-md text-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                disabled={processing}
                             >
                                 Bulk Action ({selectedIds.length})
                             </button>
@@ -391,6 +348,7 @@ const TimeScheduleList = ({
                                 <option value="pending">Pending</option>
                                 <option value="approved">Approved</option>
                                 <option value="rejected">Rejected</option>
+                                <option value="cancelled">Cancelled</option>
                             </select>
                         </div>
                     </div>
@@ -404,7 +362,7 @@ const TimeScheduleList = ({
                         </div>
                         <input
                             type="text"
-                            placeholder="Search by name, ID, department, or schedule"
+                            placeholder="Search by name, ID, department, or reason"
                             className="pl-10 w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                             value={searchTerm}
                             onChange={handleSearchChange}
@@ -457,12 +415,12 @@ const TimeScheduleList = ({
                 <table className="min-w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50 sticky top-0 z-10">
                         <tr>
-                            {selectableItemsCount > 0 && (
+                            {pendingItemsCount > 0 && (
                                 <th scope="col" className="px-4 py-3 w-10">
                                     <input
                                         type="checkbox"
                                         className="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
-                                        checked={selectAll && selectedIds.length === selectableItemsCount}
+                                        checked={selectAll && selectedIds.length === pendingItemsCount}
                                         onChange={toggleSelectAll}
                                     />
                                 </th>
@@ -480,9 +438,6 @@ const TimeScheduleList = ({
                                 New Schedule
                             </th>
                             <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Time
-                            </th>
-                            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                 Status
                             </th>
                             <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -491,80 +446,77 @@ const TimeScheduleList = ({
                         </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
-                        {filteredTimeSchedules.length === 0 ? (
+                        {filteredScheduleChanges.length === 0 ? (
                             <tr>
-                                <td colSpan={selectableItemsCount > 0 ? "8" : "7"} className="px-6 py-4 text-center text-sm text-gray-500">
-                                    No time schedule change records found
+                                <td colSpan={pendingItemsCount > 0 ? "7" : "6"} className="px-6 py-4 text-center text-sm text-gray-500">
+                                    No schedule change records found
                                 </td>
                             </tr>
                         ) : (
-                            filteredTimeSchedules.map(timeSchedule => (
-                                <tr key={timeSchedule.id} className="hover:bg-gray-50">
-                                    {selectableItemsCount > 0 && (
+                            filteredScheduleChanges.map(scheduleChange => (
+                                <tr key={scheduleChange.id} className="hover:bg-gray-50">
+                                    {pendingItemsCount > 0 && (
                                         <td className="px-4 py-4">
-                                            {canSelectTimeSchedule(timeSchedule) && (
+                                            {scheduleChange.status === 'pending' && (
                                                 <input
                                                     type="checkbox"
                                                     className="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
-                                                    checked={selectedIds.includes(timeSchedule.id)}
-                                                    onChange={() => toggleSelectItem(timeSchedule.id)}
+                                                    checked={selectedIds.includes(scheduleChange.id)}
+                                                    onChange={() => toggleSelectItem(scheduleChange.id)}
                                                 />
                                             )}
                                         </td>
                                     )}
                                     <td className="px-6 py-4 whitespace-nowrap">
                                         <div className="text-sm font-medium text-gray-900">
-                                            {timeSchedule.employee ? 
-                                                `${timeSchedule.employee.Lname}, ${timeSchedule.employee.Fname}` : 
+                                            {scheduleChange.employee ? 
+                                                `${scheduleChange.employee.Lname}, ${scheduleChange.employee.Fname}` : 
                                                 'Unknown employee'}
                                         </div>
                                         <div className="text-sm text-gray-500">
-                                            {timeSchedule.employee?.idno || 'N/A'}
+                                            {scheduleChange.employee?.idno || 'N/A'}
                                         </div>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap">
                                         <div className="text-sm text-gray-900">
-                                            {timeSchedule.scheduleType?.name || 'N/A'}
+                                            {scheduleChange.schedule_type?.name || 'N/A'}
                                         </div>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap">
                                         <div className="text-sm text-gray-900">
-                                            {timeSchedule.effective_date ? formatDate(timeSchedule.effective_date) : 'N/A'}
+                                            {scheduleChange.effective_date ? formatDate(scheduleChange.effective_date) : 'N/A'}
                                         </div>
-                                        {timeSchedule.end_date && (
-                                            <div className="text-xs text-gray-500">
-                                                Until: {formatDate(timeSchedule.end_date)}
+                                        {scheduleChange.end_date && (
+                                            <div className="text-sm text-gray-500">
+                                                Until: {formatDate(scheduleChange.end_date)}
                                             </div>
                                         )}
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap">
                                         <div className="text-sm text-gray-900">
-                                            {timeSchedule.new_schedule || 'N/A'}
+                                            {scheduleChange.new_schedule || 'Custom Schedule'}
+                                        </div>
+                                        <div className="text-sm text-gray-500">
+                                            {scheduleChange.new_start_time && scheduleChange.new_end_time ? 
+                                                `${formatTime(scheduleChange.new_start_time)} - ${formatTime(scheduleChange.new_end_time)}` : 
+                                                'Hours not specified'}
                                         </div>
                                     </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                        {timeSchedule.new_start_time ? formatTime(timeSchedule.new_start_time) : 'N/A'} - {timeSchedule.new_end_time ? formatTime(timeSchedule.new_end_time) : 'N/A'}
-                                    </td>
                                     <td className="px-6 py-4 whitespace-nowrap">
-                                        <TimeScheduleStatusBadge status={timeSchedule.status} />
+                                        <TimeScheduleStatusBadge status={scheduleChange.status} />
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                                         <button
-                                            onClick={() => handleViewDetail(timeSchedule)}
+                                            onClick={() => handleViewDetail(scheduleChange)}
                                             className="text-indigo-600 hover:text-indigo-900 mr-3"
                                         >
                                             View
                                         </button>
                                         
-                                        {(timeSchedule.status === 'pending' && 
-                                          (userRoles.isSuperAdmin || 
-                                           timeSchedule.employee_id === userRoles.employeeId || 
-                                           (userRoles.isDepartmentManager && 
-                                            userRoles.managedDepartments?.includes(timeSchedule.employee?.Department)))) && (
+                                        {scheduleChange.status === 'pending' && (
                                             <button
-                                                onClick={() => handleDelete(timeSchedule.id)}
+                                                onClick={() => handleDelete(scheduleChange.id)}
                                                 className="text-red-600 hover:text-red-900"
-                                                disabled={processing}
                                             >
                                                 Delete
                                             </button>
@@ -578,22 +530,20 @@ const TimeScheduleList = ({
             </div>
             
             {/* Detail Modal */}
-            {showModal && selectedTimeSchedule && (
+            {showModal && selectedScheduleChange && (
                 <TimeScheduleDetailModal
-                    timeSchedule={selectedTimeSchedule}
+                    scheduleChange={selectedScheduleChange}
                     onClose={handleCloseModal}
                     onStatusUpdate={handleStatusUpdate}
-                    userRoles={userRoles}
                 />
             )}
 
             {/* Bulk Action Modal */}
             {showBulkActionModal && (
-                <TimeScheduleBulkActionModal
-                    selectedCount={selectedIds.length} 
+                <MultiBulkActionModal
+                    selectedCount={selectedIds.length}
                     onClose={handleCloseBulkActionModal}
                     onSubmit={handleBulkStatusUpdate}
-                    userRoles={userRoles}
                 />
             )}
         </div>

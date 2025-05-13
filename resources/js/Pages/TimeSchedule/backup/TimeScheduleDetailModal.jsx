@@ -1,8 +1,9 @@
+// resources/js/Pages/TimeSchedule/TimeScheduleDetailModal.jsx
 import React, { useState } from 'react';
 import { format } from 'date-fns';
 import TimeScheduleStatusBadge from './TimeScheduleStatusBadge';
 
-const TimeScheduleDetailModal = ({ timeSchedule, onClose, onStatusUpdate, userRoles = {} }) => {
+const TimeScheduleDetailModal = ({ scheduleChange, onClose, onStatusUpdate }) => {
     const [remarks, setRemarks] = useState('');
     const [processing, setProcessing] = useState(false);
     
@@ -16,19 +17,26 @@ const TimeScheduleDetailModal = ({ timeSchedule, onClose, onStatusUpdate, userRo
         
         setProcessing(true);
         
+        // Create data object with status and remarks
         const data = {
             status: status,
             remarks: remarks
         };
         
+        // Call the onStatusUpdate with id and data
+        // Add safety check to ensure onStatusUpdate is a function
         if (typeof onStatusUpdate === 'function') {
-            onStatusUpdate(timeSchedule.id, data);
+            onStatusUpdate(scheduleChange.id, data);
+        } else {
+            console.error('onStatusUpdate is not a function');
+            alert('Error: Unable to update status. Please try again later.');
+            setProcessing(false);
         }
-        setProcessing(false);
     };
     
     // Format date safely
     const formatDate = (dateString) => {
+        if (!dateString) return 'N/A';
         try {
             return format(new Date(dateString), 'yyyy-MM-dd');
         } catch (error) {
@@ -37,38 +45,17 @@ const TimeScheduleDetailModal = ({ timeSchedule, onClose, onStatusUpdate, userRo
         }
     };
     
-    // Format datetime safely
-    const formatDateTime = (dateTimeString) => {
-        try {
-            return format(new Date(dateTimeString), 'yyyy-MM-dd h:mm a');
-        } catch (error) {
-            console.error('Error formatting datetime:', error);
-            return 'Invalid datetime';
-        }
-    };
-    
     // Format time safely
     const formatTime = (timeString) => {
+        if (!timeString) return 'N/A';
         try {
             return format(new Date(timeString), 'h:mm a');
         } catch (error) {
-            try {
-                // Try alternative parsing for time-only strings
-                const today = new Date().toISOString().split('T')[0];
-                return format(new Date(`${today}T${timeString}`), 'h:mm a');
-            } catch (error) {
-                console.error('Error formatting time:', error);
-                return timeString || 'N/A';
-            }
+            console.error('Error formatting time:', error);
+            return 'Invalid time';
         }
     };
     
-    // Check if user can approve/reject
-    const canApprove = userRoles.isSuperAdmin || 
-                      userRoles.isHrdManager || 
-                      (userRoles.isDepartmentManager && 
-                       userRoles.managedDepartments?.includes(timeSchedule.employee?.Department));
-
     return (
         <div className="fixed inset-0 z-50 overflow-y-auto">
             <div className="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
@@ -83,120 +70,109 @@ const TimeScheduleDetailModal = ({ timeSchedule, onClose, onStatusUpdate, userRo
                         <div className="sm:flex sm:items-start">
                             <div className="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left w-full">
                                 <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4">
-                                    Time Schedule Change Request #{timeSchedule.id}
+                                    Schedule Change Request #{scheduleChange.id}
                                 </h3>
                                 
-                                {/* Employee details section */}
                                 <div className="mt-4 bg-gray-50 px-4 py-5 sm:grid sm:grid-cols-2 sm:gap-4 sm:px-6 rounded-md">
                                     <div className="text-sm font-medium text-gray-500">Employee ID</div>
                                     <div className="mt-1 text-sm text-gray-900 sm:mt-0">
-                                        {timeSchedule.employee?.idno || 'N/A'}
+                                        {scheduleChange.employee?.idno || 'N/A'}
                                     </div>
                                     
                                     <div className="text-sm font-medium text-gray-500">Employee Name</div>
                                     <div className="mt-1 text-sm text-gray-900 sm:mt-0">
-                                        {timeSchedule.employee ? 
-                                            `${timeSchedule.employee.Lname}, ${timeSchedule.employee.Fname} ${timeSchedule.employee.MName || ''}` 
+                                        {scheduleChange.employee ? 
+                                            `${scheduleChange.employee.Lname}, ${scheduleChange.employee.Fname} ${scheduleChange.employee.MName || ''}` 
                                             : 'N/A'}
                                     </div>
                                     
                                     <div className="text-sm font-medium text-gray-500">Department</div>
                                     <div className="mt-1 text-sm text-gray-900 sm:mt-0">
-                                        {timeSchedule.employee?.Department || 'N/A'}
+                                        {scheduleChange.employee?.Department || 'N/A'}
                                     </div>
                                     
                                     <div className="text-sm font-medium text-gray-500">Job Title</div>
                                     <div className="mt-1 text-sm text-gray-900 sm:mt-0">
-                                        {timeSchedule.employee?.Jobtitle || 'N/A'}
+                                        {scheduleChange.employee?.Jobtitle || 'N/A'}
                                     </div>
                                 </div>
                                 
-                                {/* Schedule change details section */}
                                 <div className="mt-4 bg-gray-50 px-4 py-5 sm:grid sm:grid-cols-2 sm:gap-4 sm:px-6 rounded-md">
                                     <div className="text-sm font-medium text-gray-500">Schedule Type</div>
                                     <div className="mt-1 text-sm text-gray-900 sm:mt-0">
-                                        {timeSchedule.scheduleType?.name || 'N/A'}
+                                        {scheduleChange.schedule_type?.name || 'N/A'}
                                     </div>
                                     
                                     <div className="text-sm font-medium text-gray-500">Effective Date</div>
                                     <div className="mt-1 text-sm text-gray-900 sm:mt-0">
-                                        {timeSchedule.effective_date ? formatDate(timeSchedule.effective_date) : 'N/A'}
+                                        {formatDate(scheduleChange.effective_date)}
                                     </div>
                                     
                                     <div className="text-sm font-medium text-gray-500">End Date</div>
                                     <div className="mt-1 text-sm text-gray-900 sm:mt-0">
-                                        {timeSchedule.end_date ? formatDate(timeSchedule.end_date) : 'Permanent'}
+                                        {scheduleChange.end_date ? formatDate(scheduleChange.end_date) : 'Permanent Change'}
                                     </div>
                                     
                                     <div className="text-sm font-medium text-gray-500">Current Schedule</div>
                                     <div className="mt-1 text-sm text-gray-900 sm:mt-0">
-                                        {timeSchedule.current_schedule || 'N/A'}
+                                        {scheduleChange.current_schedule || 'Not specified'}
                                     </div>
                                     
                                     <div className="text-sm font-medium text-gray-500">New Schedule</div>
                                     <div className="mt-1 text-sm text-gray-900 sm:mt-0">
-                                        {timeSchedule.new_schedule || 'N/A'}
+                                        {scheduleChange.new_schedule || 'Custom Schedule'}
                                     </div>
                                     
-                                    <div className="text-sm font-medium text-gray-500">New Time</div>
+                                    <div className="text-sm font-medium text-gray-500">New Working Hours</div>
                                     <div className="mt-1 text-sm text-gray-900 sm:mt-0">
-                                        {timeSchedule.new_start_time ? formatTime(timeSchedule.new_start_time) : 'N/A'} - {timeSchedule.new_end_time ? formatTime(timeSchedule.new_end_time) : 'N/A'}
+                                        {scheduleChange.new_start_time && scheduleChange.new_end_time ? 
+                                            `${formatTime(scheduleChange.new_start_time)} - ${formatTime(scheduleChange.new_end_time)}` 
+                                            : 'Not specified'}
                                     </div>
                                     
                                     <div className="text-sm font-medium text-gray-500">Status</div>
                                     <div className="mt-1 text-sm text-gray-900 sm:mt-0">
-                                        <TimeScheduleStatusBadge status={timeSchedule.status} />
+                                        <TimeScheduleStatusBadge status={scheduleChange.status} />
                                     </div>
                                     
                                     <div className="text-sm font-medium text-gray-500">Filed Date</div>
                                     <div className="mt-1 text-sm text-gray-900 sm:mt-0">
-                                        {timeSchedule.created_at ? 
-                                            formatDateTime(timeSchedule.created_at) 
+                                        {scheduleChange.created_at ? 
+                                            format(new Date(scheduleChange.created_at), 'yyyy-MM-dd h:mm a') 
                                             : 'N/A'}
                                     </div>
                                 </div>
                                 
-                                {/* Reason section */}
                                 <div className="mt-4">
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Reason:</label>
                                     <div className="border rounded-md p-3 bg-gray-50 text-sm text-gray-900">
-                                        {timeSchedule.reason || 'No reason provided'}
+                                        {scheduleChange.reason || 'No reason provided'}
                                     </div>
                                 </div>
                                 
-                                {/* Approval Status Section */}
-                                {timeSchedule.approved_at && (
-                                    <div className="mt-4 border-t border-gray-200 pt-4">
-                                        <h4 className="text-md font-medium text-gray-900 mb-3">Approval Information</h4>
-                                        
-                                        <div className="bg-gray-50 rounded-md p-4 space-y-3">
-                                            <div className="flex items-start justify-between">
-                                                <div>
-                                                    <div className="text-sm font-medium text-gray-700">Approved/Rejected By</div>
-                                                </div>
-                                                <div className="text-right">
-                                                    <div className="text-sm font-medium">
-                                                        {timeSchedule.approver ? timeSchedule.approver.name : 'N/A'}
-                                                    </div>
-                                                    <div className="text-xs text-gray-500 mt-1">
-                                                        {formatDateTime(timeSchedule.approved_at)}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            
-                                            {timeSchedule.remarks && (
-                                                <div className="border border-gray-200 rounded p-2 text-sm text-gray-700 bg-white">
-                                                    <span className="font-medium">Remarks:</span> {timeSchedule.remarks}
-                                                </div>
-                                            )}
+                                {scheduleChange.remarks && (
+                                    <div className="mt-4">
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Remarks:</label>
+                                        <div className="border rounded-md p-3 bg-gray-50 text-sm text-gray-900">
+                                            {scheduleChange.remarks}
                                         </div>
                                     </div>
                                 )}
                                 
-                                {/* Approval Form - only show if pending and user can approve */}
-                                {canApprove && timeSchedule.status === 'pending' && (
+                                {scheduleChange.approved_at && (
+                                    <div className="mt-4 text-sm text-gray-500">
+                                        {scheduleChange.status && scheduleChange.status.charAt(0).toUpperCase() + scheduleChange.status.slice(1)} on {' '}
+                                        {scheduleChange.approved_at ? 
+                                            format(new Date(scheduleChange.approved_at), 'yyyy-MM-dd h:mm a') 
+                                            : 'N/A'}
+                                        {scheduleChange.approver && ` by ${scheduleChange.approver.name}`}
+                                    </div>
+                                )}
+                                
+                                {/* Approval Form */}
+                                {scheduleChange.status === 'pending' && (
                                     <div className="mt-6 border-t border-gray-200 pt-4">
-                                        <h4 className="text-md font-medium text-gray-900 mb-3">Take Action</h4>
+                                        <h4 className="text-md font-medium text-gray-900 mb-3">Approval Decision</h4>
                                         
                                         <div className="mb-4">
                                             <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -225,60 +201,6 @@ const TimeScheduleDetailModal = ({ timeSchedule, onClose, onStatusUpdate, userRo
                                                 disabled={processing}
                                             >
                                                 {processing ? 'Processing...' : 'Reject'}
-                                            </button>
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* Force Approve Button (Superadmin Only) */}
-                                {userRoles.isSuperAdmin && timeSchedule.status === 'pending' && (
-                                    <div className="mt-6 border-t border-gray-200 pt-4">
-                                        <h4 className="text-md font-medium text-gray-900 mb-3">
-                                            Administrative Actions
-                                        </h4>
-                                        
-                                        <div className="mb-4">
-                                            <div className="bg-yellow-50 p-4 rounded-md">
-                                                <div className="flex">
-                                                    <div className="flex-shrink-0">
-                                                        <svg className="h-5 w-5 text-yellow-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                                                            <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                                                        </svg>
-                                                    </div>
-                                                    <div className="ml-3">
-                                                        <h3 className="text-sm font-medium text-yellow-800">
-                                                            Administrative Override
-                                                        </h3>
-                                                        <div className="mt-2 text-sm text-yellow-700">
-                                                            <p>
-                                                                Force approving will bypass the normal approval workflow. Use with caution.
-                                                            </p>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        
-                                        <div className="mb-4">
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                                Admin Remarks
-                                            </label>
-                                            <textarea
-                                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
-                                                rows={3}
-                                                value={remarks}
-                                                onChange={(e) => setRemarks(e.target.value)}
-                                                placeholder="Enter remarks for this administrative action"
-                                            ></textarea>
-                                        </div>
-                                        
-                                        <div className="flex justify-end">
-                                            <button
-                                                className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
-                                                onClick={() => handleStatusChange('force_approved')}
-                                                disabled={processing}
-                                            >
-                                                {processing ? 'Processing...' : 'Force Approve'}
                                             </button>
                                         </div>
                                     </div>

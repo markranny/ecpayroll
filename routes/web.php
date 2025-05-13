@@ -308,15 +308,27 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
         // Time Schedule Routes
         Route::get('/time-schedules', [TimeScheduleController::class, 'index'])
-            ->name('time-schedules.index');
+        ->name('time-schedules.index');
         Route::post('/time-schedules', [TimeScheduleController::class, 'store'])
             ->name('time-schedules.store');
         Route::post('/time-schedules/{id}/status', [TimeScheduleController::class, 'updateStatus'])
             ->name('time-schedules.updateStatus');
         Route::delete('/time-schedules/{id}', [TimeScheduleController::class, 'destroy'])
             ->name('time-schedules.destroy');
+        Route::post('/time-schedules/{id}/delete', [TimeScheduleController::class, 'destroy'])
+            ->name('time-schedules.destroy-post');
         Route::get('/time-schedules/export', [TimeScheduleController::class, 'export'])
             ->name('time-schedules.export');
+        
+        // Add this bulk update route for Time Schedule
+        Route::post('/time-schedules/bulk-update', [TimeScheduleController::class, 'bulkUpdateStatus'])
+            ->name('time-schedules.bulkUpdateStatus');
+        
+        // Force approve route (superadmin only)
+        Route::middleware('role:superadmin')->group(function () {
+            Route::post('/time-schedules/force-approve', [TimeScheduleController::class, 'forceApprove'])
+                ->name('time-schedules.force-approve');
+        });
 
         // Official Business Routes
         Route::get('/official-business', [OfficialBusinessController::class, 'index'])

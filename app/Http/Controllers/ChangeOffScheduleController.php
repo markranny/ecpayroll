@@ -185,74 +185,67 @@ class ChangeOffScheduleController extends Controller
      * Update the status of a change rest day request.
      */
     public function updateStatus(Request $request, $id)
-    {
-        $user = Auth::user();
-        $changeOff = ChangeOffSchedule::findOrFail($id);
-        
-        $validated = $request->validate([
-            'status' => 'required|in:approved,rejected,force_approved',
-            'remarks' => 'nullable|string|max:500',
-        ]);
+{
+    $user = Auth::user();
+    $changeOff = ChangeOffSchedule::findOrFail($id);
+    
+    $validated = $request->validate([
+        'status' => 'required|in:approved,rejected,force_approved',
+        'remarks' => 'nullable|string|max:500',
+    ]);
 
-        // Check permission
-        $canUpdate = false;
-        $isForceApproval = $validated['status'] === 'force_approved';
-        
-        $userRoles = $this->getUserRoles($user);
-        
-        // Only superadmin can force approve
-        if ($isForceApproval && $userRoles['isSuperAdmin']) {
-            $canUpdate = true;
-            // Force approval becomes a regular approval but with admin override
-            $validated['status'] = 'approved';
-        }
-        // Department manager can approve/reject for their department
-        elseif ($userRoles['isDepartmentManager'] && 
-            in_array($changeOff->employee->Department, $userRoles['managedDepartments']) &&
-            !$isForceApproval) {
-            $canUpdate = true;
-        }
-        // HRD manager or superadmin can approve/reject any request
-        elseif (($userRoles['isHrdManager'] || $userRoles['isSuperAdmin']) && !$isForceApproval) {
-            $canUpdate = true;
-        }
-
-        if (!$canUpdate) {
-            return response()->json([
-                'message' => 'You are not authorized to update this change rest day request.'
-            ], 403);
-        }
-
-        try {
-            // Special case for force approval by superadmin
-            if ($isForceApproval) {
-                $changeOff->remarks = 'Administrative override: ' . ($validated['remarks'] ?? 'Force approved by admin');
-            } else {
-                $changeOff->remarks = $validated['remarks'];
-            }
-            
-            $changeOff->status = $validated['status'];
-            $changeOff->approved_by = $user->id;
-            $changeOff->approved_at = now();
-            $changeOff->save();
-
-            // Get fresh data
-            $changeOff = ChangeOffSchedule::with(['employee', 'approver'])->find($changeOff->id);
-            
-            // Get full updated list
-            $changeOffs = $this->getFilteredChangeOffs($user);
-
-            return response()->json([
-                'message' => 'Change rest day status updated successfully.',
-                'changeOff' => $changeOff,
-                'changeOffs' => $changeOffs
-            ]);
-        } catch (\Exception $e) {
-            return response()->json([
-                'message' => 'Failed to update change rest day status: ' . $e->getMessage()
-            ], 500);
-        }
+    // Check permission
+    $canUpdate = false;
+    $isForceApproval = $validated['status'] === 'force_approved';
+    
+    $userRoles = $this->getUserRoles($user);
+    
+    // Only superadmin can force approve
+    if ($isForceApproval && $userRoles['isSuperAdmin']) {
+        $canUpdate = true;
+        // Force approval becomes a regular approval but with admin override
+        $validated['status'] = 'approved';
     }
+    // Department manager can approve/reject for their department
+    elseif ($userRoles['isDepartmentManager'] && 
+        in_array($changeOff->employee->Department, $userRoles['managedDepartments']) &&
+        !$isForceApproval) {
+        $canUpdate = true;
+    }
+    // HRD manager or superadmin can approve/reject any request
+    elseif (($userRoles['isHrdManager'] || $userRoles['isSuperAdmin']) && !$isForceApproval) {
+        $canUpdate = true;
+    }
+
+    if (!$canUpdate) {
+        return back()->with('error', 'You are not authorized to update this change rest day request.');
+    }
+
+    try {
+        // Special case for force approval by superadmin
+        if ($isForceApproval) {
+            $changeOff->remarks = 'Administrative override: ' . ($validated['remarks'] ?? 'Force approved by admin');
+        } else {
+            $changeOff->remarks = $validated['remarks'];
+        }
+        
+        $changeOff->status = $validated['status'];
+        $changeOff->approved_by = $user->id;
+        $changeOff->approved_at = now();
+        $changeOff->save();
+
+        // Get filtered change offs for the user
+        $changeOffs = $this->getFilteredChangeOffs($user);
+
+        // Return to previous page with success message
+        return redirect()->back()->with([
+            'message' => 'Change rest day status updated successfully.',
+            'changeOffs' => $changeOffs
+        ]);
+    } catch (\Exception $e) {
+        return redirect()->back()->with('error', 'Failed to update change rest day status: ' . $e->getMessage());
+    }
+}
 
     /**
      * Bulk update the status of multiple change rest day requests.

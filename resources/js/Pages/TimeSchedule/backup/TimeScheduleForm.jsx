@@ -1,3 +1,4 @@
+// resources/js/Pages/TimeSchedule/TimeScheduleForm.jsx
 import React, { useState, useEffect } from 'react';
 import { format } from 'date-fns';
 
@@ -7,24 +8,24 @@ const TimeScheduleForm = ({ employees, departments, scheduleTypes, onSubmit }) =
     // Form state
     const [formData, setFormData] = useState({
         employee_ids: [],
-        schedule_type_id: '',
         effective_date: today,
         end_date: '',
         current_schedule: '',
         new_schedule: '',
-        new_start_time: '',
-        new_end_time: '',
-        reason: ''
+        new_start_time: '08:00',
+        new_end_time: '17:00',
+        reason: '',
+        schedule_type: scheduleTypes.length > 0 ? scheduleTypes[0].id : ''
     });
     
     // Filtered employees state
-    const [displayedEmployees, setDisplayedEmployees] = useState(employees || []);
+    const [filteredEmployees, setFilteredEmployees] = useState(employees || []);
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedDepartment, setSelectedDepartment] = useState('');
     
-    // Update displayed employees when search or department selection changes
+    // Update filtered employees when search or department selection changes
     useEffect(() => {
-        let result = [...employees];
+        let result = employees || [];
         
         // Filter by search term
         if (searchTerm) {
@@ -38,23 +39,11 @@ const TimeScheduleForm = ({ employees, departments, scheduleTypes, onSubmit }) =
         
         // Filter by department
         if (selectedDepartment) {
-            result = result.filter(employee => 
-                employee.Department === selectedDepartment
-            );
+            result = result.filter(employee => employee.Department === selectedDepartment);
         }
         
-        // Sort selected employees to top
-        result.sort((a, b) => {
-            const aSelected = formData.employee_ids.includes(a.id);
-            const bSelected = formData.employee_ids.includes(b.id);
-            
-            if (aSelected && !bSelected) return -1;
-            if (!aSelected && bSelected) return 1;
-            return 0;
-        });
-        
-        setDisplayedEmployees(result);
-    }, [searchTerm, selectedDepartment, employees, formData.employee_ids]);
+        setFilteredEmployees(result);
+    }, [searchTerm, selectedDepartment, employees]);
     
     // Handle input changes
     const handleChange = (e) => {
@@ -69,6 +58,7 @@ const TimeScheduleForm = ({ employees, departments, scheduleTypes, onSubmit }) =
     const handleEmployeeSelection = (employeeId) => {
         const numericId = parseInt(employeeId, 10);
         setFormData(prevData => {
+            // Check if employee is already selected
             if (prevData.employee_ids.includes(numericId)) {
                 // Remove the employee
                 return {
@@ -85,30 +75,28 @@ const TimeScheduleForm = ({ employees, departments, scheduleTypes, onSubmit }) =
         });
     };
     
-    // Handle checkbox change
-    const handleCheckboxChange = (e, employeeId) => {
-        e.stopPropagation();
-        handleEmployeeSelection(employeeId);
-    };
-    
-    // Handle select all employees
+    // Handle select all employees (filtered ones only)
     const handleSelectAll = () => {
         setFormData(prevData => {
-            const displayedIds = displayedEmployees.map(emp => emp.id);
-            const allSelected = displayedIds.every(id => prevData.employee_ids.includes(id));
+            // Get IDs of all filtered employees
+            const filteredIds = filteredEmployees.map(emp => emp.id);
+            
+            // Check if all filtered employees are already selected
+            const allSelected = filteredIds.every(id => prevData.employee_ids.includes(id));
             
             if (allSelected) {
-                // Deselect all displayed employees
+                // If all are selected, deselect them
                 return {
                     ...prevData,
-                    employee_ids: prevData.employee_ids.filter(id => !displayedIds.includes(id))
+                    employee_ids: prevData.employee_ids.filter(id => !filteredIds.includes(id))
                 };
             } else {
-                // Select all displayed employees
-                const remainingSelectedIds = prevData.employee_ids.filter(id => !displayedIds.includes(id));
+                // If not all are selected, select all filtered employees
+                // First remove any existing filtered employees to avoid duplicates
+                const remainingSelectedIds = prevData.employee_ids.filter(id => !filteredIds.includes(id));
                 return {
                     ...prevData,
-                    employee_ids: [...remainingSelectedIds, ...displayedIds]
+                    employee_ids: [...remainingSelectedIds, ...filteredIds]
                 };
             }
         });
@@ -124,45 +112,35 @@ const TimeScheduleForm = ({ employees, departments, scheduleTypes, onSubmit }) =
             return;
         }
         
-        if (!formData.schedule_type_id) {
-            alert('Please select a schedule type');
+        if (!formData.effective_date || !formData.schedule_type || !formData.new_start_time || !formData.new_end_time) {
+            alert('Please fill in all required fields');
             return;
         }
         
-        if (!formData.effective_date) {
-            alert('Please provide an effective date');
-            return;
-        }
-        
-        if (!formData.new_schedule.trim()) {
-            alert('Please provide a new schedule name');
-            return;
-        }
-        
-        if (!formData.new_start_time || !formData.new_end_time) {
-            alert('Please provide both start and end times');
+        if (formData.new_start_time >= formData.new_end_time) {
+            alert('End time must be after start time');
             return;
         }
         
         if (!formData.reason.trim()) {
-            alert('Please provide a reason for the time schedule change');
+            alert('Please provide a reason for the schedule change');
             return;
         }
         
         // Call the onSubmit prop with the form data
         onSubmit(formData);
         
-        // Reset form after submission 
+        // Reset form after submission
         setFormData({
             employee_ids: [],
-            schedule_type_id: '',
             effective_date: today,
             end_date: '',
             current_schedule: '',
             new_schedule: '',
-            new_start_time: '',
-            new_end_time: '',
-            reason: ''
+            new_start_time: '08:00',
+            new_end_time: '17:00',
+            reason: '',
+            schedule_type: scheduleTypes.length > 0 ? scheduleTypes[0].id : ''
         });
         
         // Reset filters
@@ -170,9 +148,9 @@ const TimeScheduleForm = ({ employees, departments, scheduleTypes, onSubmit }) =
         setSelectedDepartment('');
     };
     
-    // Calculate if all displayed employees are selected
-    const allDisplayedSelected = displayedEmployees.length > 0 && 
-        displayedEmployees.every(emp => formData.employee_ids.includes(emp.id));
+    // Calculate if all filtered employees are selected
+    const allFilteredSelected = filteredEmployees.length > 0 && 
+        filteredEmployees.every(emp => formData.employee_ids.includes(emp.id));
     
     // Get selected employees details for display
     const selectedEmployees = employees.filter(emp => formData.employee_ids.includes(emp.id));
@@ -180,8 +158,8 @@ const TimeScheduleForm = ({ employees, departments, scheduleTypes, onSubmit }) =
     return (
         <div className="bg-white shadow-md rounded-lg overflow-hidden">
             <div className="p-4 border-b">
-                <h3 className="text-lg font-semibold">File Time Schedule Change Request</h3>
-                <p className="text-sm text-gray-500">Create time schedule change request for one or multiple employees</p>
+                <h3 className="text-lg font-semibold">Change Time Schedule Request</h3>
+                <p className="text-sm text-gray-500">Request schedule changes for one or multiple employees</p>
             </div>
             
             <form onSubmit={handleSubmit}>
@@ -218,13 +196,13 @@ const TimeScheduleForm = ({ employees, departments, scheduleTypes, onSubmit }) =
                                 <button
                                     type="button"
                                     className={`w-full px-4 py-2 rounded-md ${
-                                        allDisplayedSelected 
+                                        allFilteredSelected 
                                             ? 'bg-indigo-700 hover:bg-indigo-800' 
                                             : 'bg-indigo-500 hover:bg-indigo-600'
                                     } text-white focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500`}
                                     onClick={handleSelectAll}
                                 >
-                                    {allDisplayedSelected ? 'Deselect All' : 'Select All'}
+                                    {allFilteredSelected ? 'Deselect All' : 'Select All'}
                                 </button>
                             </div>
                         </div>
@@ -252,14 +230,14 @@ const TimeScheduleForm = ({ employees, departments, scheduleTypes, onSubmit }) =
                                 </thead>
                                 
                                 <tbody className="bg-white divide-y divide-gray-200">
-                                    {displayedEmployees.length === 0 ? (
+                                    {filteredEmployees.length === 0 ? (
                                         <tr>
                                             <td colSpan="5" className="px-4 py-3 text-center text-sm text-gray-500">
                                                 No employees match your search criteria
                                             </td>
                                         </tr>
                                     ) : (
-                                        displayedEmployees.map(employee => (
+                                        filteredEmployees.map(employee => (
                                             <tr 
                                                 key={employee.id} 
                                                 className={`hover:bg-gray-50 cursor-pointer ${
@@ -272,7 +250,7 @@ const TimeScheduleForm = ({ employees, departments, scheduleTypes, onSubmit }) =
                                                         type="checkbox"
                                                         className="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                                         checked={formData.employee_ids.includes(employee.id)}
-                                                        onChange={(e) => handleCheckboxChange(e, employee.id)}
+                                                        onChange={() => {}}
                                                         onClick={(e) => e.stopPropagation()}
                                                     />
                                                 </td>
@@ -313,26 +291,27 @@ const TimeScheduleForm = ({ employees, departments, scheduleTypes, onSubmit }) =
                         </div>
                     </div>
                     
-                    {/* Time Schedule Change Details Section */}
+                    {/* Schedule Change Details Section */}
                     <div className="bg-gray-50 p-4 rounded-lg">
                         <h4 className="font-medium mb-3">Schedule Change Details</h4>
                         
                         <div className="space-y-4">
                             <div>
-                                <label htmlFor="schedule_type_id" className="block text-sm font-medium text-gray-700 mb-1">
+                                <label htmlFor="schedule_type" className="block text-sm font-medium text-gray-700 mb-1">
                                     Schedule Type <span className="text-red-600">*</span>
                                 </label>
                                 <select
-                                    id="schedule_type_id"
-                                    name="schedule_type_id"
+                                    id="schedule_type"
+                                    name="schedule_type"
                                     className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
-                                    value={formData.schedule_type_id}
+                                    value={formData.schedule_type}
                                     onChange={handleChange}
                                     required
                                 >
-                                    <option value="">Select Schedule Type</option>
-                                    {scheduleTypes.map(type => (
-                                        <option key={type.id} value={type.id}>{type.name}</option>
+                                    {scheduleTypes.map((type) => (
+                                        <option key={type.id} value={type.id}>
+                                            {type.name}
+                                        </option>
                                     ))}
                                 </select>
                             </div>
@@ -350,14 +329,11 @@ const TimeScheduleForm = ({ employees, departments, scheduleTypes, onSubmit }) =
                                     onChange={handleChange}
                                     required
                                 />
-                                <p className="mt-1 text-xs text-gray-500">
-                                    The date when the new schedule will start
-                                </p>
                             </div>
                             
                             <div>
                                 <label htmlFor="end_date" className="block text-sm font-medium text-gray-700 mb-1">
-                                    End Date
+                                    End Date (Optional)
                                 </label>
                                 <input
                                     type="date"
@@ -368,16 +344,10 @@ const TimeScheduleForm = ({ employees, departments, scheduleTypes, onSubmit }) =
                                     onChange={handleChange}
                                 />
                                 <p className="mt-1 text-xs text-gray-500">
-                                    Optional: Leave blank if this is a permanent change
+                                    Leave blank for permanent schedule change
                                 </p>
                             </div>
-                        </div>
-                    </div>
-                    
-                    <div className="bg-gray-50 p-4 rounded-lg">
-                        <h4 className="font-medium mb-3">Time Schedule Information</h4>
-                        
-                        <div className="space-y-4">
+                            
                             <div>
                                 <label htmlFor="current_schedule" className="block text-sm font-medium text-gray-700 mb-1">
                                     Current Schedule
@@ -392,10 +362,16 @@ const TimeScheduleForm = ({ employees, departments, scheduleTypes, onSubmit }) =
                                     placeholder="e.g., Regular 8AM-5PM"
                                 />
                             </div>
-                            
+                        </div>
+                    </div>
+                    
+                    <div className="bg-gray-50 p-4 rounded-lg">
+                        <h4 className="font-medium mb-3">New Schedule</h4>
+                        
+                        <div className="space-y-4">
                             <div>
                                 <label htmlFor="new_schedule" className="block text-sm font-medium text-gray-700 mb-1">
-                                    New Schedule <span className="text-red-600">*</span>
+                                    New Schedule Name
                                 </label>
                                 <input
                                     type="text"
@@ -404,8 +380,7 @@ const TimeScheduleForm = ({ employees, departments, scheduleTypes, onSubmit }) =
                                     className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                     value={formData.new_schedule}
                                     onChange={handleChange}
-                                    placeholder="e.g., Night Shift 10PM-6AM"
-                                    required
+                                    placeholder="e.g., Night Shift, Custom Schedule"
                                 />
                             </div>
                             
@@ -450,13 +425,13 @@ const TimeScheduleForm = ({ employees, departments, scheduleTypes, onSubmit }) =
                                     name="reason"
                                     rows="5"
                                     className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
-                                    placeholder="Provide a detailed reason for the time schedule change request"
+                                    placeholder="Provide a detailed reason for the schedule change request"
                                     value={formData.reason}
                                     onChange={handleChange}
                                     required
                                 ></textarea>
                                 <p className="mt-1 text-xs text-gray-500">
-                                    Please provide a clear justification for changing the time schedule.
+                                    Please provide a clear justification for the schedule change.
                                 </p>
                             </div>
                         </div>
@@ -468,7 +443,7 @@ const TimeScheduleForm = ({ employees, departments, scheduleTypes, onSubmit }) =
                         type="submit"
                         className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                     >
-                        Submit Time Schedule Change Request
+                        Submit Schedule Change Request
                     </button>
                 </div>
             </form>

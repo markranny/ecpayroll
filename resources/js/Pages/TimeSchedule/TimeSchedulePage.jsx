@@ -1,29 +1,24 @@
-// resources/js/Pages/TimeSchedule/TimeSchedulePage.jsx
 import React, { useState, useEffect } from 'react';
 import { router, usePage } from '@inertiajs/react';
 import { Head } from '@inertiajs/react';
-import Layout from '@/Layouts/AuthenticatedLayout';
+import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import Sidebar from '@/Components/Sidebar';
 import TimeScheduleList from './TimeScheduleList';
 import TimeScheduleForm from './TimeScheduleForm';
 import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
+import { Clock, Plus, ListFilter } from 'lucide-react';
 
 const TimeSchedulePage = () => {
     const { props } = usePage();
-    const { auth, flash = {} } = props;
+    const { auth, flash = {}, userRoles = {}, timeSchedules = [], employees = [], departments = [], scheduleTypes = [] } = props;
     
     // State to manage component data
-    const [scheduleChanges, setScheduleChanges] = useState(props.scheduleChanges || []);
+    const [timeScheduleData, setTimeScheduleData] = useState(timeSchedules);
     const [activeTab, setActiveTab] = useState('list');
     const [processing, setProcessing] = useState(false);
     
-    // Get static data from props
-    const employees = props.employees || [];
-    const departments = props.departments || [];
-    const scheduleTypes = props.scheduleTypes || [];
-    
-    // Display flash messages with proper null checking
+    // Display flash messages
     useEffect(() => {
         if (flash && flash.message) {
             toast.success(flash.message);
@@ -34,14 +29,14 @@ const TimeSchedulePage = () => {
     }, [flash]);
     
     // Handle form submission
-    const handleSubmitScheduleChange = (formData) => {
+    const handleSubmitTimeSchedule = (formData) => {
         router.post(route('time-schedules.store'), formData, {
             onSuccess: (page) => {
-                // Update schedule changes list with the new data from the response
-                if (page.props.scheduleChanges) {
-                    setScheduleChanges(page.props.scheduleChanges);
+                // Update time schedules list with the new data from the response
+                if (page.props.timeSchedules) {
+                    setTimeScheduleData(page.props.timeSchedules);
                 }
-                toast.success('Schedule change requests created successfully');
+                toast.success('Time schedule change requests created successfully');
                 setActiveTab('list'); // Switch to list view after successful submission
             },
             onError: (errors) => {
@@ -60,108 +55,68 @@ const TimeSchedulePage = () => {
     const handleStatusUpdate = (id, data) => {
         if (processing) return;
         
-        // For batch updates, we need to manage the processing state differently
-        const isBatch = Array.isArray(id);
-        if (!isBatch) {
-            console.log("Status update called with:", id, data);
-        } else {
-            console.log(`Batch status update for ${id.length} items`);
-            setProcessing(true);
-        }
-
-        // Function to process a single update
-        const processSingleUpdate = (scheduleId, updateData) => {
-            return new Promise((resolve, reject) => {
-                router.post(route('time-schedules.updateStatus', scheduleId), updateData, {
-                    preserveScroll: true,
-                    onSuccess: (page) => {
-                        // Update schedule changes list with the new data for individual updates
-                        if (!isBatch && page.props.scheduleChanges) {
-                            setScheduleChanges(page.props.scheduleChanges);
-                        }
-                        resolve(page);
-                    },
-                    onError: (errors) => {
-                        let errorMessage = 'An error occurred while updating status';
-                        if (errors && typeof errors === 'object') {
-                            errorMessage = Object.values(errors).join(', ');
-                        }
-                        reject(errorMessage);
-                    }
-                });
-            });
-        };
-
-        // Handle single update
-        if (!isBatch) {
-            processSingleUpdate(id, data)
-                .then(() => {
-                    toast.success('Schedule change status updated successfully');
-                })
-                .catch(error => {
-                    toast.error(error);
-                });
-        } 
-        // Handle batch update
-        else {
-            const promises = id.map(scheduleId => processSingleUpdate(scheduleId, data));
-            
-            Promise.all(promises)
-                .then(responses => {
-                    // Get the latest schedule changes data from the last response
-                    if (responses.length > 0 && responses[responses.length - 1].props.scheduleChanges) {
-                        setScheduleChanges(responses[responses.length - 1].props.scheduleChanges);
-                    }
-                    toast.success(`Successfully updated ${id.length} schedule change requests`);
-                    setProcessing(false);
-                })
-                .catch(error => {
-                    toast.error(`Error updating some schedule change requests: ${error}`);
-                    setProcessing(false);
-                });
-        }
+        setProcessing(true);
+        
+        router.post(route('time-schedules.updateStatus', id), data, {
+            preserveScroll: true,
+            onSuccess: (page) => {
+                // Update time schedules list
+                if (page.props.timeSchedules) {
+                    setTimeScheduleData(page.props.timeSchedules);
+                }
+                toast.success('Time schedule change status updated successfully');
+                setProcessing(false);
+            },
+            onError: (errors) => {
+                let errorMessage = 'An error occurred while updating status';
+                if (errors && typeof errors === 'object') {
+                    errorMessage = Object.values(errors).join(', ');
+                }
+                toast.error(errorMessage);
+                setProcessing(false);
+            }
+        });
     };
     
-    // Handle schedule change deletion
-    const handleDeleteScheduleChange = (id) => {
-        if (confirm('Are you sure you want to delete this schedule change request?')) {
+    // Handle deletion
+    const handleDeleteTimeSchedule = (id) => {
+        if (confirm('Are you sure you want to delete this time schedule change request?')) {
             router.delete(route('time-schedules.destroy', id), {
                 preserveScroll: true,
                 onSuccess: (page) => {
-                    // Update schedule changes list with the new data
-                    if (page.props.scheduleChanges) {
-                        setScheduleChanges(page.props.scheduleChanges);
+                    // Update time schedules list
+                    if (page.props.timeSchedules) {
+                        setTimeScheduleData(page.props.timeSchedules);
                     } else {
-                        // Remove the deleted item from the current state if not provided in response
-                        setScheduleChanges(scheduleChanges.filter(sc => sc.id !== id));
+                        // Remove the deleted item from the current state
+                        setTimeScheduleData(timeScheduleData.filter(ts => ts.id !== id));
                     }
-                    toast.success('Schedule change request deleted successfully');
+                    toast.success('Time schedule change request deleted successfully');
                 },
-                onError: () => toast.error('Failed to delete schedule change request')
+                onError: () => toast.error('Failed to delete time schedule change request')
             });
         }
     };
     
     return (
-        <Layout>
-            <Head title="Time Schedule Management" />
+        <AuthenticatedLayout user={auth.user}>
+            <Head title="Time Schedule Change Management" />
             
-            <div className="flex min-h-screen bg-gray-50/50">
-                {/* Fixed Sidebar */}
-                <div className="fixed h-screen">
-                    <Sidebar />
-                </div>
+            <div className="flex min-h-screen bg-gray-50">
+                {/* Include the Sidebar */}
+                <Sidebar />
                 
-                {/* Main Content - with margin to account for sidebar */}
-                <div className="flex-1 p-8 ml-64">
+                {/* Main Content */}
+                <div className="flex-1 p-8 ml-0">
                     <div className="max-w-7xl mx-auto">
                         <div className="flex items-center justify-between mb-8">
                             <div>
                                 <h1 className="text-2xl font-bold text-gray-900 mb-1">
-                                    Time Schedule Management
+                                    <Clock className="inline-block w-7 h-7 mr-2 text-indigo-600" />
+                                    Time Schedule Change Management
                                 </h1>
                                 <p className="text-gray-600">
-                                    Manage employee schedule change requests and approvals.
+                                    Manage employee time schedule change requests
                                 </p>
                             </div>
                         </div>
@@ -176,20 +131,22 @@ const TimeSchedulePage = () => {
                                                     activeTab === 'list'
                                                         ? 'border-indigo-500 text-indigo-600'
                                                         : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                                                } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
+                                                } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center`}
                                                 onClick={() => setActiveTab('list')}
                                             >
-                                                View Schedule Changes
+                                                <ListFilter className="w-4 h-4 mr-2" />
+                                                View Time Schedule Changes
                                             </button>
                                             <button
                                                 className={`${
                                                     activeTab === 'create'
                                                         ? 'border-indigo-500 text-indigo-600'
                                                         : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                                                } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
+                                                } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center`}
                                                 onClick={() => setActiveTab('create')}
                                             >
-                                                Request Schedule Change
+                                                <Plus className="w-4 h-4 mr-2" />
+                                                New Time Schedule Change
                                             </button>
                                         </nav>
                                     </div>
@@ -197,16 +154,17 @@ const TimeSchedulePage = () => {
                                 
                                 {activeTab === 'list' ? (
                                     <TimeScheduleList 
-                                        scheduleChanges={scheduleChanges} 
+                                        timeSchedules={timeScheduleData} 
                                         onStatusUpdate={handleStatusUpdate}
-                                        onDelete={handleDeleteScheduleChange}
+                                        onDelete={handleDeleteTimeSchedule}
+                                        userRoles={userRoles}
                                     />
                                 ) : (
                                     <TimeScheduleForm 
                                         employees={employees} 
-                                        departments={departments} 
+                                        departments={departments}
                                         scheduleTypes={scheduleTypes}
-                                        onSubmit={handleSubmitScheduleChange}
+                                        onSubmit={handleSubmitTimeSchedule}
                                     />
                                 )}
                             </div>
@@ -216,7 +174,7 @@ const TimeSchedulePage = () => {
             </div>
             
             <ToastContainer position="top-right" autoClose={3000} />
-        </Layout>
+        </AuthenticatedLayout>
     );
 };
 

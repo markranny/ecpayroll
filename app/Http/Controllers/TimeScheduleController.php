@@ -1,429 +1,626 @@
 <?php
-// app/Http/Controllers/TimeScheduleController.php
+
 namespace App\Http\Controllers;
 
-use App\Models\Employee;
-use App\Models\TimeSchedule;
-use App\Models\ScheduleType;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Validator;
-use Illuminate\Support\Facades\Log;
-use Carbon\Carbon;
-use Inertia\Inertia;
-
+use App\Models\TimeSchedule;
+use App\Models\Employee;
+use App\Models\DepartmentManager;
+use App\Models\ScheduleType;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Carbon;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
-use PhpOffice\PhpSpreadsheet\Style\Fill;
-use PhpOffice\PhpSpreadsheet\Style\Border;
-use PhpOffice\PhpSpreadsheet\Style\Alignment;
+use Inertia\Inertia;
 
 class TimeScheduleController extends Controller
 {
     /**
-     * Display the schedule change management page.
+     * Display a listing of time schedule change requests.
      */
-    public function index()
+    public function index(Request $request)
     {
-        $scheduleChanges = TimeSchedule::with(['employee', 'scheduleType'])->latest()->get();
-        $employees = Employee::select(['id', 'idno', 'Lname', 'Fname', 'MName', 'Department', 'Jobtitle'])->get();
-        $departments = Employee::distinct()->pluck('Department')->filter()->values();
-        $scheduleTypes = ScheduleType::all();
+        $user = Auth::user();
+        $userRoles = $this->getUserRoles($user);
         
-        return Inertia::render('TimeSchedule/TimeSchedulePage', [
-            'scheduleChanges' => $scheduleChanges,
+        // Get all departments for filtering
+        $departments = Employee::select('Department')
+            ->distinct()
+            ->whereNotNull('Department')
+            ->orderBy('Department')
+            ->pluck('Department')
+            ->toArray();
+            
+        // Query time schedules based on user role
+        $timeScheduleQuery = TimeSchedule::with(['employee', 'approver', 'scheduleType']);
+        
+        // Filter based on user roles
+        if ($userRoles['isEmployee'] && !$userRoles['isDepartmentManager'] && !$userRoles['isHrdManager'] && !$userRoles['isSuperAdmin']) {
+            // Regular employees can only see their own requests
+            $employeeId = $user->employee ? $user->employee->id : null;
+            if ($employeeId) {
+                $timeScheduleQuery->where('employee_id', $employeeId);
+            }
+        } elseif ($userRoles['isDepartmentManager'] && !$userRoles['isSuperAdmin']) {
+            // Department managers can see requests from their department
+            $managedDepartments = DepartmentManager::where('manager_id', $user->id)
+                ->pluck('department')
+                ->toArray();
+                
+            $timeScheduleQuery->whereHas('employee', function($q) use ($managedDepartments) {
+                $q->whereIn('Department', $managedDepartments);
+            });
+        }
+        // HRD managers and superadmins can see all requests
+        
+        // Sort by latest first
+        $timeScheduleQuery->orderBy('created_at', 'desc');
+        
+        // Get active employees for the form
+        $employees = Employee::where('JobStatus', 'Active')
+            ->orderBy('Lname')
+            ->get();
+            
+        // Get schedule types
+        $scheduleTypes = ScheduleType::where('is_active', true)
+            ->orderBy('name')
+            ->get();
+            
+        // Check if a specific request is selected for viewing
+        $selectedId = $request->input('selected');
+        $selectedTimeSchedule = null;
+        
+        if ($selectedId) {
+            $selectedTimeSchedule = TimeSchedule::with(['employee', 'approver', 'scheduleType'])
+                ->find($selectedId);
+        }
+        
+        // Get the list of time schedule requests
+        $timeSchedules = $timeScheduleQuery->get();
+        
+        return inertia('TimeSchedule/TimeSchedulePage', [
+            'auth' => [
+                'user' => $user,
+            ],
+            'timeSchedules' => $timeSchedules,
             'employees' => $employees,
             'departments' => $departments,
             'scheduleTypes' => $scheduleTypes,
-            'auth' => [
-                'user' => Auth::user(),
-            ],
+            'selectedTimeSchedule' => $selectedTimeSchedule,
+            'userRoles' => $userRoles
         ]);
     }
 
+    private function getUserRoles($user)
+    {
+        // Check department manager directly from database first
+        $isDepartmentManager = DepartmentManager::where('manager_id', $user->id)->exists();
+        
+        // Check if user is an HRD manager
+        $isHrdManager = $this->isHrdManager($user);
+        
+        $userRoles = [
+            'isSuperAdmin' => $user->hasRole('superadmin'),
+            'isHrdManager' => $isHrdManager,
+            'isDepartmentManager' => $isDepartmentManager || $user->hasRole('department_manager'),
+            'isEmployee' => $user->is_employee || ($user->employee && $user->employee->exists()),
+            'userId' => $user->id,
+            'employeeId' => $user->employee ? $user->employee->id : null,
+            'managedDepartments' => [],
+        ];
+        
+        // If user is a department manager, get their managed departments
+        if ($userRoles['isDepartmentManager']) {
+            $userRoles['managedDepartments'] = DepartmentManager::where('manager_id', $user->id)
+                ->pluck('department')
+                ->toArray();
+        }
+        
+        return $userRoles;
+    }
+
     /**
-     * Store a new schedule change request.
+     * Store a newly created time schedule change request.
      */
     public function store(Request $request)
     {
-        Log::info('Schedule change store method called', [
-            'user_id' => Auth::id(),
-            'request_data' => $request->except(['_token'])
-        ]);
-        
-        $validator = Validator::make($request->all(), [
+        $validated = $request->validate([
             'employee_ids' => 'required|array',
-            'employee_ids.*' => 'exists:employees,id',
+            'employee_ids.*' => 'required|integer|exists:employees,id',
+            'schedule_type_id' => 'required|exists:schedule_types,id',
             'effective_date' => 'required|date',
             'end_date' => 'nullable|date|after_or_equal:effective_date',
-            'current_schedule' => 'nullable|string|max:100',
-            'new_schedule' => 'nullable|string|max:100',
-            'new_start_time' => 'required|date_format:H:i',
-            'new_end_time' => 'required|date_format:H:i',
-            'reason' => 'required|string|max:500',
-            'schedule_type' => 'required|exists:schedule_types,id',
+            'current_schedule' => 'nullable|string',
+            'new_schedule' => 'required|string',
+            'new_start_time' => 'required',
+            'new_end_time' => 'required',
+            'reason' => 'required|string|max:1000',
         ]);
-
-        if ($validator->fails()) {
-            Log::warning('Schedule change validation failed', [
-                'user_id' => Auth::id(),
-                'errors' => $validator->errors()->toArray()
-            ]);
-            return back()->withErrors($validator)->withInput();
-        }
-
+        
+        $user = Auth::user();
+        $successCount = 0;
+        $errorMessages = [];
+        
+        DB::beginTransaction();
+        
         try {
-            // Format times
-            $newStartTime = Carbon::parse($request->new_start_time)->format('H:i:s');
-            $newEndTime = Carbon::parse($request->new_end_time)->format('H:i:s');
-            
-            // Check if current user is superadmin or hrd
-            $user = Auth::user();
-            $isAutoApproved = false;
-            $userRole = 'unknown';
-            
-            Log::info('Checking user for auto-approval', [
-                'user_id' => $user->id,
-                'user_name' => $user->name
-            ]);
-            
-            // Simple role detection
-            if (stripos($user->name, 'admin') !== false || $user->id === 1) {
-                $userRole = 'superadmin';
-                $isAutoApproved = true;
-            } elseif (stripos($user->name, 'hrd') !== false || stripos($user->email, 'hrd') !== false) {
-                $userRole = 'hrd';
-                $isAutoApproved = true;
-            } else {
-                // If we can't determine the role with certainty, try to use the route
-                $routeName = request()->route() ? request()->route()->getName() : null;
+            foreach ($validated['employee_ids'] as $employeeId) {
+                $employee = Employee::find($employeeId);
                 
-                if ($routeName) {
-                    if (strpos($routeName, 'superadmin.') === 0) {
-                        $userRole = 'superadmin';
-                        $isAutoApproved = true;
-                    } elseif (strpos($routeName, 'hrd.') === 0) {
-                        $userRole = 'hrd';
-                        $isAutoApproved = true;
-                    }
+                if (!$employee) {
+                    $errorMessages[] = "Employee ID $employeeId not found";
+                    continue;
                 }
+                
+                // Check for duplicate time schedule entries
+                $existingRequest = TimeSchedule::where('employee_id', $employeeId)
+                    ->where('effective_date', $validated['effective_date'])
+                    ->where('schedule_type_id', $validated['schedule_type_id'])
+                    ->first();
+                
+                if ($existingRequest) {
+                    $errorMessages[] = "Time schedule change request for {$employee->Fname} {$employee->Lname} starting {$validated['effective_date']} already exists";
+                    continue;
+                }
+                
+                $timeSchedule = new TimeSchedule();
+                $timeSchedule->employee_id = $employeeId;
+                $timeSchedule->schedule_type_id = $validated['schedule_type_id'];
+                $timeSchedule->effective_date = $validated['effective_date'];
+                $timeSchedule->end_date = $validated['end_date'];
+                $timeSchedule->current_schedule = $validated['current_schedule'];
+                $timeSchedule->new_schedule = $validated['new_schedule'];
+                $timeSchedule->new_start_time = $validated['new_start_time'];
+                $timeSchedule->new_end_time = $validated['new_end_time'];
+                $timeSchedule->reason = $validated['reason'];
+                $timeSchedule->status = 'pending';
+                $timeSchedule->created_by = $user->id;
+                
+                $timeSchedule->save();
+                $successCount++;
             }
             
-            // Provide a default for messaging
-            $roleForDisplay = $isAutoApproved ? ucfirst($userRole) : 'standard user';
+            DB::commit();
             
-            // Batch create schedule change records for all selected employees
-            $scheduleChanges = [];
-            $employeeCount = count($request->employee_ids);
+            $message = "Successfully created {$successCount} time schedule change request(s)";
             
-            Log::info('Starting batch creation of schedule change records', [
-                'employee_count' => $employeeCount
-            ]);
-            
-            foreach ($request->employee_ids as $employeeId) {
-                $scheduleChange = new TimeSchedule([
-                    'employee_id' => $employeeId,
-                    'schedule_type_id' => $request->schedule_type,
-                    'effective_date' => $request->effective_date,
-                    'end_date' => $request->end_date,
-                    'current_schedule' => $request->current_schedule,
-                    'new_schedule' => $request->new_schedule,
-                    'new_start_time' => $newStartTime,
-                    'new_end_time' => $newEndTime,
-                    'reason' => $request->reason,
-                    'status' => $isAutoApproved ? 'approved' : 'pending',
-                    'created_by' => Auth::id()
+            if (!empty($errorMessages)) {
+                return redirect()->back()->with([
+                    'message' => $message,
+                    'errors' => $errorMessages
                 ]);
-                
-                // If auto-approved, set approver info
-                if ($isAutoApproved) {
-                    $scheduleChange->approved_by = Auth::id();
-                    $scheduleChange->approved_at = now();
-                    $scheduleChange->remarks = "Auto-approved: Filed by {$roleForDisplay}";
-                }
-                
-                $scheduleChange->save();
-                $scheduleChanges[] = $scheduleChange;
             }
             
-            // Get updated list of all schedule changes to return to the frontend
-            $allScheduleChanges = TimeSchedule::with(['employee', 'scheduleType'])->latest()->get();
-            
-            $successMessage = $isAutoApproved 
-                ? 'Schedule change requests created and auto-approved successfully' 
-                : 'Schedule change requests created successfully';
-            
-            Log::info('Schedule change store method completed successfully', [
-                'user_id' => Auth::id(),
-                'records_created' => count($scheduleChanges),
-                'is_auto_approved' => $isAutoApproved,
-                'message' => $successMessage
-            ]);
-            
-            return redirect()->back()->with([
-                'message' => $successMessage,
-                'scheduleChanges' => $allScheduleChanges
-            ]);
+            return redirect()->back()->with('message', $message);
         } catch (\Exception $e) {
-            Log::error('Failed to create schedule change requests', [
-                'user_id' => Auth::id(),
-                'error_message' => $e->getMessage(),
-                'error_code' => $e->getCode(),
-                'error_file' => $e->getFile(),
-                'error_line' => $e->getLine(),
-                'error_trace' => $e->getTraceAsString(),
-                'request' => $request->all()
-            ]);
-            
-            return redirect()->back()
-                ->with('error', 'Failed to create schedule change requests: ' . $e->getMessage())
-                ->withInput();
+            DB::rollBack();
+            return redirect()->back()->with('error', 'Error creating time schedule change requests: ' . $e->getMessage());
         }
     }
 
     /**
-     * Approve or reject a schedule change request.
+     * Update the status of a time schedule change request.
      */
     public function updateStatus(Request $request, $id)
+{
+    $user = Auth::user();
+    $timeSchedule = TimeSchedule::findOrFail($id);
+    
+    $validated = $request->validate([
+        'status' => 'required|in:approved,rejected,force_approved',
+        'remarks' => 'nullable|string|max:500',
+    ]);
+
+    // Check permission
+    $canUpdate = false;
+    $isForceApproval = $validated['status'] === 'force_approved';
+    
+    $userRoles = $this->getUserRoles($user);
+    
+    // Only superadmin can force approve
+    if ($isForceApproval && $userRoles['isSuperAdmin']) {
+        $canUpdate = true;
+        // Force approval becomes a regular approval but with admin override
+        $validated['status'] = 'approved';
+    }
+    // Department manager can approve/reject for their department
+    elseif ($userRoles['isDepartmentManager'] && 
+        in_array($timeSchedule->employee->Department, $userRoles['managedDepartments']) &&
+        !$isForceApproval) {
+        $canUpdate = true;
+    }
+    // HRD manager or superadmin can approve/reject any request
+    elseif (($userRoles['isHrdManager'] || $userRoles['isSuperAdmin']) && !$isForceApproval) {
+        $canUpdate = true;
+    }
+
+    if (!$canUpdate) {
+        return back()->with('error', 'You are not authorized to update this time schedule change request.');
+    }
+
+    try {
+        // Special case for force approval by superadmin
+        if ($isForceApproval) {
+            $timeSchedule->remarks = 'Administrative override: ' . ($validated['remarks'] ?? 'Force approved by admin');
+        } else {
+            $timeSchedule->remarks = $validated['remarks'];
+        }
+        
+        $timeSchedule->status = $validated['status'];
+        $timeSchedule->approved_by = $user->id;
+        $timeSchedule->approved_at = now();
+        $timeSchedule->save();
+
+        return redirect()->back()->with('message', 'Time schedule change status updated successfully.');
+    } catch (\Exception $e) {
+        return redirect()->back()->with('error', 'Failed to update time schedule change status: ' . $e->getMessage());
+    }
+}
+
+    /**
+     * Bulk update the status of multiple time schedule change requests.
+     */
+    public function bulkUpdateStatus(Request $request)
     {
-        $validator = Validator::make($request->all(), [
-            'status' => 'required|in:approved,rejected',
+        $user = Auth::user();
+        
+        $validated = $request->validate([
+            'time_schedule_ids' => 'required|array',
+            'time_schedule_ids.*' => 'required|integer|exists:time_schedules,id',
+            'status' => 'required|in:approved,rejected,force_approved',
             'remarks' => 'nullable|string|max:500',
         ]);
-
-        if ($validator->fails()) {
-            return redirect()->back()
-                ->withErrors($validator)
-                ->withInput();
-        }
-
+        
+        $successCount = 0;
+        $failCount = 0;
+        $errors = [];
+        
+        DB::beginTransaction();
+        
         try {
-            $scheduleChange = TimeSchedule::findOrFail($id);
-            
-            // Only allow status updates if current status is pending
-            if ($scheduleChange->status !== 'pending') {
-                return redirect()->back()
-                    ->with('error', 'Cannot update schedule change that has already been ' . $scheduleChange->status);
+            foreach ($validated['time_schedule_ids'] as $timeScheduleId) {
+                $timeSchedule = TimeSchedule::findOrFail($timeScheduleId);
+                
+                // Check permission
+                $canUpdate = false;
+                $userRoles = $this->getUserRoles($user);
+                
+                // Force approve option for superadmins
+                if ($validated['status'] === 'force_approved' && $userRoles['isSuperAdmin']) {
+                    $canUpdate = true;
+                }
+                // Department manager can approve/reject for their department
+                elseif ($userRoles['isDepartmentManager'] && 
+                    in_array($timeSchedule->employee->Department, $userRoles['managedDepartments']) &&
+                    $validated['status'] !== 'force_approved') {
+                    $canUpdate = true;
+                }
+                // HRD manager or superadmin can approve/reject any request
+                elseif (($userRoles['isHrdManager'] || $userRoles['isSuperAdmin']) && 
+                    $validated['status'] !== 'force_approved') {
+                    $canUpdate = true;
+                }
+                
+                if (!$canUpdate) {
+                    $failCount++;
+                    $errors[] = "Not authorized to update time schedule change request #{$timeScheduleId}";
+                    continue;
+                }
+                
+                // Update the status
+                if ($validated['status'] === 'force_approved') {
+                    $timeSchedule->status = 'approved';
+                    $timeSchedule->remarks = 'Administrative override: ' . ($validated['remarks'] ?? 'Force approved by admin');
+                } else {
+                    $timeSchedule->status = $validated['status'];
+                    $timeSchedule->remarks = $validated['remarks'] ?? 'Bulk ' . $validated['status'];
+                }
+                $timeSchedule->approved_by = $user->id;
+                $timeSchedule->approved_at = now();
+                $timeSchedule->save();
+                $successCount++;
             }
             
-            $scheduleChange->status = $request->status;
-            $scheduleChange->remarks = $request->remarks;
-            $scheduleChange->approved_by = Auth::id();
-            $scheduleChange->approved_at = now();
-            $scheduleChange->save();
+            DB::commit();
             
-            // Get updated list of all schedule changes to return to the frontend
-            $allScheduleChanges = TimeSchedule::with(['employee', 'scheduleType'])->latest()->get();
+            $message = "{$successCount} time schedule change requests updated successfully.";
+            if ($failCount > 0) {
+                $message .= " {$failCount} updates failed.";
+            }
             
-            return redirect()->back()->with([
-                'message' => 'Schedule change status updated successfully',
-                'scheduleChanges' => $allScheduleChanges
-            ]);
+            return redirect()->back()->with('message', $message);
+            
         } catch (\Exception $e) {
-            Log::error('Failed to update schedule change status', [
-                'id' => $id,
-                'error' => $e->getMessage(),
-                'request' => $request->all()
-            ]);
-            
-            return redirect()->back()
-                ->with('error', 'Failed to update schedule change status: ' . $e->getMessage())
-                ->withInput();
+            DB::rollBack();
+            return redirect()->back()->with('error', 'Error updating time schedule change statuses: ' . $e->getMessage());
+        }
+    }
+
+    private function getFilteredTimeSchedules($user)
+    {
+        $userRoles = $this->getUserRoles($user);
+        
+        $timeScheduleQuery = TimeSchedule::with(['employee', 'approver', 'scheduleType']);
+        
+        // Filter based on user roles
+        if ($userRoles['isEmployee'] && !$userRoles['isDepartmentManager'] && !$userRoles['isHrdManager'] && !$userRoles['isSuperAdmin']) {
+            $employeeId = $user->employee ? $user->employee->id : null;
+            if ($employeeId) {
+                $timeScheduleQuery->where('employee_id', $employeeId);
+            }
+        } elseif ($userRoles['isDepartmentManager'] && !$userRoles['isSuperAdmin']) {
+            $managedDepartments = DepartmentManager::where('manager_id', $user->id)
+                ->pluck('department')
+                ->toArray();
+                
+            $timeScheduleQuery->whereHas('employee', function($q) use ($managedDepartments) {
+                $q->whereIn('Department', $managedDepartments);
+            });
+        }
+        
+        return $timeScheduleQuery->orderBy('created_at', 'desc')->get();
+    }
+
+    public function destroy($id)
+    {
+        $user = Auth::user();
+        $timeSchedule = TimeSchedule::findOrFail($id);
+        
+        // Only allow deletion if status is pending and user has permission
+        if ($timeSchedule->status !== 'pending') {
+            return back()->with('error', 'Only pending time schedule change requests can be deleted');
+        }
+        
+        $userRoles = $this->getUserRoles($user);
+        $canDelete = false;
+        
+        // Check permissions
+        if ($userRoles['isSuperAdmin']) {
+            $canDelete = true;
+        } elseif ($timeSchedule->employee_id === $userRoles['employeeId']) {
+            // Users can delete their own pending requests
+            $canDelete = true;
+        } elseif ($userRoles['isDepartmentManager'] && 
+                in_array($timeSchedule->employee->Department, $userRoles['managedDepartments'])) {
+            $canDelete = true;
+        } elseif ($userRoles['isHrdManager']) {
+            $canDelete = true;
+        }
+        
+        if (!$canDelete) {
+            return back()->with('error', 'You are not authorized to delete this time schedule change request');
+        }
+        
+        try {
+            $timeSchedule->delete();
+            return back()->with('message', 'Time schedule change request deleted successfully');
+        } catch (\Exception $e) {
+            return back()->with('error', 'Failed to delete time schedule change request: ' . $e->getMessage());
         }
     }
 
     /**
-     * Remove the specified schedule change.
+     * Export time schedule change requests to Excel.
      */
-    public function destroy($id)
-    {
-        try {
-            $scheduleChange = TimeSchedule::findOrFail($id);
-            
-            // Only allow deletion if status is pending
-            if ($scheduleChange->status !== 'pending') {
-                return redirect()->back()
-                    ->with('error', 'Cannot delete schedule change that has already been ' . $scheduleChange->status);
-            }
-            
-            $scheduleChange->delete();
-            
-            // Get updated list of all schedule changes to return to the frontend
-            $allScheduleChanges = TimeSchedule::with(['employee', 'scheduleType'])->latest()->get();
-            
-            return redirect()->back()->with([
-                'message' => 'Schedule change deleted successfully',
-                'scheduleChanges' => $allScheduleChanges
-            ]);
-        } catch (\Exception $e) {
-            Log::error('Failed to delete schedule change', [
-                'id' => $id,
-                'error' => $e->getMessage()
-            ]);
-            
-            return redirect()->back()->with('error', 'Failed to delete schedule change: ' . $e->getMessage());
-        }
-    }
-
     public function export(Request $request)
     {
-        try {
-            // Start with a base query
-            $query = TimeSchedule::with(['employee', 'scheduleType', 'approver']);
-            
-            // Apply filters if provided
-            if ($request->has('status') && $request->status) {
-                $query->where('status', $request->status);
+        $filterStatus = $request->input('status');
+        $searchTerm = $request->input('search');
+        $fromDate = $request->input('from_date');
+        $toDate = $request->input('to_date');
+        
+        $user = Auth::user();
+        $userRoles = $this->getUserRoles($user);
+        
+        $timeScheduleQuery = TimeSchedule::with(['employee', 'approver', 'scheduleType']);
+        
+        // Apply role-based filtering
+        if ($userRoles['isEmployee'] && !$userRoles['isDepartmentManager'] && !$userRoles['isHrdManager'] && !$userRoles['isSuperAdmin']) {
+            $employeeId = $user->employee ? $user->employee->id : null;
+            if ($employeeId) {
+                $timeScheduleQuery->where('employee_id', $employeeId);
             }
-            
-            if ($request->has('search') && $request->search) {
-                $search = $request->search;
-                $query->where(function($q) use ($search) {
-                    $q->whereHas('employee', function($subQuery) use ($search) {
-                        $subQuery->where('Fname', 'like', "%{$search}%")
-                            ->orWhere('Lname', 'like', "%{$search}%")
-                            ->orWhere('idno', 'like', "%{$search}%")
-                            ->orWhere('Department', 'like', "%{$search}%");
-                    })
-                    ->orWhere('reason', 'like', "%{$search}%")
-                    ->orWhereHas('scheduleType', function($subQuery) use ($search) {
-                        $subQuery->where('name', 'like', "%{$search}%");
-                    });
-                });
-            }
-            
-            if ($request->has('from_date') && $request->from_date) {
-                $query->whereDate('effective_date', '>=', $request->from_date);
-            }
-            
-            if ($request->has('to_date') && $request->to_date) {
-                $query->whereDate('effective_date', '<=', $request->to_date);
-            }
-            
-            // Get the filtered schedule changes
-            $scheduleChanges = $query->latest()->get();
-            
-            // Create a spreadsheet
-            $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
-            $sheet = $spreadsheet->getActiveSheet();
-            
-            // Set headers
-            $sheet->setCellValue('A1', 'ID');
-            $sheet->setCellValue('B1', 'Employee ID');
-            $sheet->setCellValue('C1', 'Employee Name');
-            $sheet->setCellValue('D1', 'Department');
-            $sheet->setCellValue('E1', 'Position');
-            $sheet->setCellValue('F1', 'Schedule Type');
-            $sheet->setCellValue('G1', 'Effective Date');
-            $sheet->setCellValue('H1', 'End Date');
-            $sheet->setCellValue('I1', 'Current Schedule');
-            $sheet->setCellValue('J1', 'New Schedule');
-            $sheet->setCellValue('K1', 'New Hours');
-            $sheet->setCellValue('L1', 'Status');
-            $sheet->setCellValue('M1', 'Reason');
-            $sheet->setCellValue('N1', 'Remarks');
-            $sheet->setCellValue('O1', 'Filed Date');
-            $sheet->setCellValue('P1', 'Action Date');
-            $sheet->setCellValue('Q1', 'Approved/Rejected By');
-            
-            // Style headers
-            $headerStyle = [
-                'font' => [
-                    'bold' => true,
-                    'color' => ['rgb' => 'FFFFFF'],
-                ],
-                'fill' => [
-                    'fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID,
-                    'startColor' => ['rgb' => '4472C4'],
-                ],
-                'borders' => [
-                    'allBorders' => [
-                        'borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN,
-                    ],
-                ],
-            ];
-            
-            $sheet->getStyle('A1:Q1')->applyFromArray($headerStyle);
-            
-            // Auto-adjust column width
-            foreach(range('A', 'Q') as $column) {
-                $sheet->getColumnDimension($column)->setAutoSize(true);
-            }
-            
-            // Fill data
-            $row = 2;
-            foreach ($scheduleChanges as $scheduleChange) {
-                $sheet->setCellValue('A' . $row, $scheduleChange->id);
-                $sheet->setCellValue('B' . $row, $scheduleChange->employee->idno ?? 'N/A');
-                $sheet->setCellValue('C' . $row, $scheduleChange->employee ? "{$scheduleChange->employee->Lname}, {$scheduleChange->employee->Fname} {$scheduleChange->employee->MName}" : 'Unknown');
-                $sheet->setCellValue('D' . $row, $scheduleChange->employee->Department ?? 'N/A');
-                $sheet->setCellValue('E' . $row, $scheduleChange->employee->Jobtitle ?? 'N/A');
-                $sheet->setCellValue('F' . $row, $scheduleChange->scheduleType->name ?? 'N/A');
-                $sheet->setCellValue('G' . $row, $scheduleChange->effective_date ? Carbon::parse($scheduleChange->effective_date)->format('Y-m-d') : 'N/A');
-                $sheet->setCellValue('H' . $row, $scheduleChange->end_date ? Carbon::parse($scheduleChange->end_date)->format('Y-m-d') : 'Permanent');
-                $sheet->setCellValue('I' . $row, $scheduleChange->current_schedule ?? 'N/A');
-                $sheet->setCellValue('J' . $row, $scheduleChange->new_schedule ?? 'N/A');
-                $sheet->setCellValue('K' . $row, ($scheduleChange->new_start_time && $scheduleChange->new_end_time) ? 
-                    Carbon::parse($scheduleChange->new_start_time)->format('h:i A') . ' - ' . Carbon::parse($scheduleChange->new_end_time)->format('h:i A') : 'N/A');
-                $sheet->setCellValue('L' . $row, ucfirst($scheduleChange->status));
-                $sheet->setCellValue('M' . $row, $scheduleChange->reason ?? 'N/A');
-                $sheet->setCellValue('N' . $row, $scheduleChange->remarks ?? 'N/A');
-                $sheet->setCellValue('O' . $row, $scheduleChange->created_at ? Carbon::parse($scheduleChange->created_at)->format('Y-m-d h:i A') : 'N/A');
-                $sheet->setCellValue('P' . $row, $scheduleChange->approved_at ? Carbon::parse($scheduleChange->approved_at)->format('Y-m-d h:i A') : 'N/A');
-                $sheet->setCellValue('Q' . $row, $scheduleChange->approver ? $scheduleChange->approver->name : 'N/A');
+        } elseif ($userRoles['isDepartmentManager'] && !$userRoles['isSuperAdmin']) {
+            $managedDepartments = DepartmentManager::where('manager_id', $user->id)
+                ->pluck('department')
+                ->toArray();
                 
-                // Apply status-based styling
-                if ($scheduleChange->status === 'approved') {
-                    $sheet->getStyle('L' . $row)->applyFromArray([
-                        'font' => ['color' => ['rgb' => '008000']], // Green for approved
-                    ]);
-                } elseif ($scheduleChange->status === 'rejected') {
-                    $sheet->getStyle('L' . $row)->applyFromArray([
-                        'font' => ['color' => ['rgb' => 'FF0000']], // Red for rejected
-                    ]);
-                } elseif ($scheduleChange->status === 'pending') {
-                    $sheet->getStyle('L' . $row)->applyFromArray([
-                        'font' => ['color' => ['rgb' => 'FFA500']], // Orange for pending
-                    ]);
+            $timeScheduleQuery->whereHas('employee', function($q) use ($managedDepartments) {
+                $q->whereIn('Department', $managedDepartments);
+            });
+        }
+        
+        // Apply filters
+        if ($filterStatus) {
+            $timeScheduleQuery->where('status', $filterStatus);
+        }
+        
+        if ($searchTerm) {
+            $timeScheduleQuery->where(function($query) use ($searchTerm) {
+                $query->whereHas('employee', function($q) use ($searchTerm) {
+                    $q->where('Fname', 'like', "%{$searchTerm}%")
+                      ->orWhere('Lname', 'like', "%{$searchTerm}%")
+                      ->orWhere('idno', 'like', "%{$searchTerm}%")
+                      ->orWhere('Department', 'like', "%{$searchTerm}%");
+                })
+                ->orWhere('reason', 'like', "%{$searchTerm}%")
+                ->orWhere('new_schedule', 'like', "%{$searchTerm}%");
+            });
+        }
+        
+        if ($fromDate) {
+            $timeScheduleQuery->whereDate('effective_date', '>=', $fromDate);
+        }
+        
+        if ($toDate) {
+            $timeScheduleQuery->whereDate('effective_date', '<=', $toDate);
+        }
+        
+        $timeSchedules = $timeScheduleQuery->orderBy('created_at', 'desc')->get();
+        
+        // Create Excel file
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        
+        // Set headers
+        $sheet->setCellValue('A1', 'ID');
+        $sheet->setCellValue('B1', 'Employee ID');
+        $sheet->setCellValue('C1', 'Employee Name');
+        $sheet->setCellValue('D1', 'Department');
+        $sheet->setCellValue('E1', 'Schedule Type');
+        $sheet->setCellValue('F1', 'Effective Date');
+        $sheet->setCellValue('G1', 'End Date');
+        $sheet->setCellValue('H1', 'Current Schedule');
+        $sheet->setCellValue('I1', 'New Schedule');
+        $sheet->setCellValue('J1', 'New Start Time');
+        $sheet->setCellValue('K1', 'New End Time');
+        $sheet->setCellValue('L1', 'Reason');
+        $sheet->setCellValue('M1', 'Status');
+        $sheet->setCellValue('N1', 'Approved By');
+        $sheet->setCellValue('O1', 'Approved Date');
+        $sheet->setCellValue('P1', 'Remarks');
+        $sheet->setCellValue('Q1', 'Created Date');
+        
+        // Add data
+        $row = 2;
+        foreach ($timeSchedules as $timeSchedule) {
+            $sheet->setCellValue('A' . $row, $timeSchedule->id);
+            $sheet->setCellValue('B' . $row, $timeSchedule->employee ? $timeSchedule->employee->idno : '');
+            $sheet->setCellValue('C' . $row, $timeSchedule->employee ? $timeSchedule->employee->Lname . ', ' . $timeSchedule->employee->Fname : '');
+            $sheet->setCellValue('D' . $row, $timeSchedule->employee ? $timeSchedule->employee->Department : '');
+            $sheet->setCellValue('E' . $row, $timeSchedule->scheduleType ? $timeSchedule->scheduleType->name : '');
+            $sheet->setCellValue('F' . $row, $timeSchedule->effective_date ? Carbon::parse($timeSchedule->effective_date)->format('Y-m-d') : '');
+            $sheet->setCellValue('G' . $row, $timeSchedule->end_date ? Carbon::parse($timeSchedule->end_date)->format('Y-m-d') : '');
+            $sheet->setCellValue('H' . $row, $timeSchedule->current_schedule);
+            $sheet->setCellValue('I' . $row, $timeSchedule->new_schedule);
+            $sheet->setCellValue('J' . $row, $timeSchedule->new_start_time ? Carbon::parse($timeSchedule->new_start_time)->format('h:i A') : '');
+            $sheet->setCellValue('K' . $row, $timeSchedule->new_end_time ? Carbon::parse($timeSchedule->new_end_time)->format('h:i A') : '');
+            $sheet->setCellValue('L' . $row, $timeSchedule->reason);
+            $sheet->setCellValue('M' . $row, ucfirst($timeSchedule->status));
+            $sheet->setCellValue('N' . $row, $timeSchedule->approver ? $timeSchedule->approver->name : '');
+            $sheet->setCellValue('O' . $row, $timeSchedule->approved_at ? Carbon::parse($timeSchedule->approved_at)->format('Y-m-d H:i:s') : '');
+            $sheet->setCellValue('P' . $row, $timeSchedule->remarks);
+            $sheet->setCellValue('Q' . $row, $timeSchedule->created_at ? Carbon::parse($timeSchedule->created_at)->format('Y-m-d H:i:s') : '');
+            $row++;
+        }
+        
+        // Auto-size columns
+        foreach (range('A', 'Q') as $column) {
+            $sheet->getColumnDimension($column)->setAutoSize(true);
+        }
+        
+        // Create writer and save
+        $writer = new Xlsx($spreadsheet);
+        $filename = 'Time_Schedule_Change_' . date('Y-m-d_H-i-s') . '.xlsx';
+        
+        $tempFile = tempnam(sys_get_temp_dir(), 'timeschedule_export_');
+        $writer->save($tempFile);
+        
+        return response()->download($tempFile, $filename, [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ])->deleteFileAfterSend(true);
+    }
+
+    /**
+     * Force approve time schedule change requests (admin only).
+     */
+    public function forceApprove(Request $request)
+    {
+        // Ensure only superadmins can force approve
+        if (!$this->isSuperAdmin(Auth::user())) {
+            return back()->with('error', 'Only administrators can force approve time schedule change requests.');
+        }
+        
+        $validated = $request->validate([
+            'time_schedule_ids' => 'required|array',
+            'time_schedule_ids.*' => 'required|integer|exists:time_schedules,id',
+            'remarks' => 'nullable|string|max:500',
+        ]);
+        
+        $user = Auth::user();
+        $remarks = $validated['remarks'] ?? 'Administrative override: Force approved by admin';
+        $successCount = 0;
+        $failCount = 0;
+        $errors = [];
+        
+        // Log the force approval action
+        \Log::info('Force approval of time schedule change initiated', [
+            'admin_id' => $user->id,
+            'admin_name' => $user->name,
+            'count' => count($validated['time_schedule_ids'])
+        ]);
+        
+        foreach ($validated['time_schedule_ids'] as $timeScheduleId) {
+            try {
+                $timeSchedule = TimeSchedule::findOrFail($timeScheduleId);
+                
+                // Skip already approved changes
+                if ($timeSchedule->status === 'approved') {
+                    $errors[] = "Time schedule change #{$timeScheduleId} is already approved";
+                    $failCount++;
+                    continue;
                 }
                 
-                $row++;
-            }
-            
-            // Add borders to all data cells
-            $lastRow = $row - 1;
-            if ($lastRow >= 2) {
-                $sheet->getStyle('A2:Q' . $lastRow)->applyFromArray([
-                    'borders' => [
-                        'allBorders' => [
-                            'borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN,
-                        ],
-                    ],
+                // Force approve
+                $timeSchedule->status = 'approved';
+                $timeSchedule->approved_by = $user->id;
+                $timeSchedule->approved_at = now();
+                $timeSchedule->remarks = 'Administrative override: ' . $remarks;
+                $timeSchedule->save();
+                
+                $successCount++;
+                
+                // Log individual approvals
+                \Log::info("Force approved time schedule change #{$timeScheduleId}", [
+                    'admin_id' => $user->id,
+                    'time_schedule_id' => $timeScheduleId,
+                    'previous_status' => $timeSchedule->getOriginal('status')
                 ]);
+            } catch (\Exception $e) {
+                \Log::error("Error force approving time schedule change #{$timeScheduleId}: " . $e->getMessage());
+                $failCount++;
+                $errors[] = "Error force approving time schedule change #{$timeScheduleId}: " . $e->getMessage();
             }
-            
-            // Set the filename
-            $filename = 'Schedule_Change_Report_' . Carbon::now()->format('Y-m-d_His') . '.xlsx';
-            
-            // Create the Excel file
-            $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($spreadsheet);
-            
-            // Set header information for download
-            header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-            header('Content-Disposition: attachment;filename="' . $filename . '"');
-            header('Cache-Control: max-age=0');
-            
-            // Save file to php://output
-            $writer->save('php://output');
-            exit;
-            
-        } catch (\Exception $e) {
-            Log::error('Failed to export schedule change data', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-            
-            return redirect()->back()->with('error', 'Failed to export schedule change data: ' . $e->getMessage());
         }
+        
+        // Create appropriate flash message
+        $message = "{$successCount} time schedule change requests force approved successfully.";
+        if ($failCount > 0) {
+            $message .= " {$failCount} force approvals failed.";
+        }
+        
+        // Return with message
+        return back()->with('message', $message);
+    }
+
+    private function isSuperAdmin($user)
+    {
+        if (method_exists($user, 'roles') && $user->roles && $user->roles->count() > 0) {
+            if ($user->roles->contains('name', 'superadmin') || $user->roles->contains('slug', 'superadmin')) {
+                return true;
+            }
+        }
+        
+        if (method_exists($user, 'hasRole') && $user->hasRole('superadmin')) {
+            return true;
+        }
+        
+        return false;
+    }
+
+    private function isHrdManager($user)
+    {
+        if (method_exists($user, 'roles') && $user->roles && $user->roles->count() > 0) {
+            if ($user->roles->contains('name', 'hrd_manager') || $user->roles->contains('slug', 'hrd')) {
+                return true;
+            }
+        }
+        
+        if (method_exists($user, 'hasRole') && $user->hasRole('hrd_manager')) {
+            return true;
+        }
+        
+        return false;
     }
 }
