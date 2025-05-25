@@ -131,4 +131,16 @@ class Employee extends Model
     {
         return "{$this->Lname}, {$this->Fname} " . ($this->MName ? $this->MName . ' ' : '') . ($this->Suffix ?: '');
     }
+
+    public function offsetBank()
+    {
+        return $this->hasOne(OffsetBank::class);
+    }
+
+    // Get employee's remaining offset hours
+    public function getRemainingOffsetHours()
+    {
+        $bank = $this->offsetBank;
+        return $bank ? $bank->remaining_hours : 0;
+    }
 }

@@ -5,7 +5,6 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import Sidebar from '@/Components/Sidebar';
 import OffsetList from './OffsetList';
 import OffsetForm from './OffsetForm';
-import OffsetBankManager from './OffsetBankManager';
 import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import { RefreshCw, Plus, ListFilter, Database } from 'lucide-react';

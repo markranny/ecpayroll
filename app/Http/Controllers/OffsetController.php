@@ -1,572 +1,898 @@
 <?php
-// app/Http/Controllers/OffsetController.php
+
 namespace App\Http\Controllers;
 
-use App\Models\Employee;
-use App\Models\Offset;
-use App\Models\OffsetType;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Validator;
-use Illuminate\Support\Facades\Log;
-use Carbon\Carbon;
-use Inertia\Inertia;
-
+use App\Models\Offset;
+use App\Models\OffsetBank;
+use App\Models\OffsetType;
+use App\Models\Employee;
+use App\Models\DepartmentManager;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Carbon;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
-use PhpOffice\PhpSpreadsheet\Style\Fill;
-use PhpOffice\PhpSpreadsheet\Style\Border;
-use PhpOffice\PhpSpreadsheet\Style\Alignment;
+use Inertia\Inertia;
 
 class OffsetController extends Controller
 {
     /**
-     * Display the offset management page.
+     * Display a listing of offsets.
      */
-    public function index()
+    public function index(Request $request)
     {
-        $offsets = Offset::with(['employee', 'offset_type'])->latest()->get();
-        $employees = Employee::select(['id', 'idno', 'Lname', 'Fname', 'MName', 'Department', 'Jobtitle'])->get();
-        $departments = Employee::distinct()->pluck('Department')->filter()->values();
+        $user = Auth::user();
+        $userRoles = $this->getUserRoles($user);
         
-        // Offset types
-        $offsetTypes = OffsetType::all();
+        // Get all departments for filtering
+        $departments = Employee::select('Department')
+            ->distinct()
+            ->whereNotNull('Department')
+            ->orderBy('Department')
+            ->pluck('Department')
+            ->toArray();
+            
+        // Query offsets based on user role
+        $offsetQuery = Offset::with(['employee', 'offset_type', 'approver']);
         
-        return Inertia::render('Offset/OffsetPage', [
+        // Filter based on user roles
+        if ($userRoles['isEmployee'] && !$userRoles['isDepartmentManager'] && !$userRoles['isHrdManager'] && !$userRoles['isSuperAdmin']) {
+            // Regular employees can only see their own offsets
+            $employeeId = $user->employee ? $user->employee->id : null;
+            if ($employeeId) {
+                $offsetQuery->where('employee_id', $employeeId);
+            }
+        } elseif ($userRoles['isDepartmentManager'] && !$userRoles['isSuperAdmin']) {
+            // Department managers can see offsets from their department
+            $managedDepartments = DepartmentManager::where('manager_id', $user->id)
+                ->pluck('department')
+                ->toArray();
+                
+            $offsetQuery->whereHas('employee', function($q) use ($managedDepartments) {
+                $q->whereIn('Department', $managedDepartments);
+            });
+        }
+        // HRD managers and superadmins can see all offsets
+        
+        // Sort by latest first
+        $offsetQuery->orderBy('created_at', 'desc');
+        
+        // Get active employees for the form
+        $employees = Employee::where('JobStatus', 'Active')
+            ->orderBy('Lname')
+            ->get()
+            ->map(function ($employee) {
+                // Get offset bank info
+                $bank = $employee->offsetBank;
+                $remainingHours = $bank ? $bank->remaining_hours : 0;
+                
+                return [
+                    'id' => $employee->id,
+                    'idno' => $employee->idno,
+                    'name' => "{$employee->Lname}, {$employee->Fname} {$employee->MName}",
+                    'department' => $employee->Department,
+                    'position' => $employee->Jobtitle,
+                    'remaining_hours' => $remainingHours,
+                ];
+            });
+            
+        // Get offset types
+        $offsetTypes = OffsetType::where('is_active', true)->get();
+            
+        // Check if a specific request is selected for viewing
+        $selectedId = $request->input('selected');
+        $selectedOffset = null;
+        
+        if ($selectedId) {
+            $selectedOffset = Offset::with(['employee', 'offset_type', 'approver'])
+                ->find($selectedId);
+        }
+        
+        // Get the list of offset requests
+        $offsets = $offsetQuery->get()->map(function ($offset) {
+            // Get the employee's remaining offset hours
+            $employee = $offset->employee;
+            $remainingHours = $employee ? $employee->getRemainingOffsetHours() : 0;
+            
+            return array_merge($offset->toArray(), [
+                'employee_remaining_hours' => $remainingHours
+            ]);
+        });
+        
+        return inertia('Offset/OffsetPage', [
+            'auth' => [
+                'user' => $user,
+            ],
             'offsets' => $offsets,
             'employees' => $employees,
-            'departments' => $departments,
             'offsetTypes' => $offsetTypes,
-            'auth' => [
-                'user' => Auth::user(),
-            ],
+            'departments' => $departments,
+            'selectedOffset' => $selectedOffset,
+            'userRoles' => $userRoles
         ]);
     }
 
-    /**
-     * Get filtered offsets for API requests.
-     */
-    public function getOffsets(Request $request)
+    private function getUserRoles($user)
     {
-        $query = Offset::with(['employee', 'offset_type'])->latest();
+        // Check department manager directly from database first
+        $isDepartmentManager = DepartmentManager::where('manager_id', $user->id)->exists();
         
-        // Filter by employee if specified
-        if ($request->has('employee_id')) {
-            $query->where('employee_id', $request->employee_id);
+        // Check if user is an HRD manager
+        $isHrdManager = $this->isHrdManager($user);
+        
+        $userRoles = [
+            'isSuperAdmin' => $user->hasRole('superadmin'),
+            'isHrdManager' => $isHrdManager,
+            'isDepartmentManager' => $isDepartmentManager || $user->hasRole('department_manager'),
+            'isEmployee' => $user->is_employee || ($user->employee && $user->employee->exists()),
+            'userId' => $user->id,
+            'employeeId' => $user->employee ? $user->employee->id : null,
+            'managedDepartments' => [],
+        ];
+        
+        // If user is a department manager, get their managed departments
+        if ($userRoles['isDepartmentManager']) {
+            $userRoles['managedDepartments'] = DepartmentManager::where('manager_id', $user->id)
+                ->pluck('department')
+                ->toArray();
         }
         
-        // Filter by status if specified
-        if ($request->has('status')) {
-            $query->where('status', $request->status);
-        }
-        
-        // Filter by date range if specified
-        if ($request->has('from_date') && $request->has('to_date')) {
-            $query->whereBetween('date', [$request->from_date, $request->to_date]);
-        }
-        
-        $offsets = $query->paginate(15);
-        
-        return response()->json($offsets);
+        return $userRoles;
     }
 
     /**
-     * Store multiple new offset records.
+     * Store a newly created offset request.
      */
     public function store(Request $request)
     {
-        Log::info('Offset store method called', [
-            'user_id' => Auth::id(),
-            'request_data' => $request->except(['_token'])
-        ]);
-        
-        $validator = Validator::make($request->all(), [
-            'employee_ids' => 'required|array',
-            'employee_ids.*' => 'exists:employees,id',
+        $validated = $request->validate([
+            'employee_id' => 'required|integer|exists:employees,id',
+            'offset_type_id' => 'required|integer|exists:offset_types,id',
             'date' => 'required|date',
-            'workday' => 'required|date',
-            'offset_type_id' => 'required|exists:offset_types,id',
+            'workday' => 'required|date|different:date',
             'hours' => 'required|numeric|min:0.5|max:24',
-            'reason' => 'required|string|max:500',
+            'reason' => 'required|string|max:1000',
+            'transaction_type' => 'required|in:credit,debit',
         ]);
-
-        if ($validator->fails()) {
-            Log::warning('Offset validation failed', [
-                'user_id' => Auth::id(),
-                'errors' => $validator->errors()->toArray()
-            ]);
-            return back()->withErrors($validator)->withInput();
-        }
-
-        try {
-            // Check if current user is superadmin or hrd
-            $user = Auth::user();
-            $isAutoApproved = false;
-            $userRole = 'unknown';
-            
-            Log::info('Checking user for auto-approval', [
-                'user_id' => $user->id,
-                'user_name' => $user->name
-            ]);
-            
-            // Simple role detection based on username and user ID
-            if (stripos($user->name, 'admin') !== false || $user->id === 1) {
-                $userRole = 'superadmin';
-                $isAutoApproved = true;
-                
-                Log::info('User identified as superadmin', [
-                    'user_id' => $user->id,
-                    'user_name' => $user->name,
-                    'detection_method' => stripos($user->name, 'admin') !== false ? 'name contains admin' : 'user has ID 1'
-                ]);
-            } elseif (stripos($user->name, 'hrd') !== false || stripos($user->email, 'hrd') !== false) {
-                $userRole = 'hrd';
-                $isAutoApproved = true;
-                
-                Log::info('User identified as HRD', [
-                    'user_id' => $user->id,
-                    'user_name' => $user->name,
-                    'user_email' => $user->email
-                ]);
-            } else {
-                // If we can't determine the role with certainty, try to use the route
-                $routeName = request()->route() ? request()->route()->getName() : null;
-                
-                if ($routeName) {
-                    if (strpos($routeName, 'superadmin.') === 0) {
-                        $userRole = 'superadmin';
-                        $isAutoApproved = true;
-                    } elseif (strpos($routeName, 'hrd.') === 0) {
-                        $userRole = 'hrd';
-                        $isAutoApproved = true;
-                    }
-                    
-                    if ($isAutoApproved) {
-                        Log::info('User role determined from route', [
-                            'user_id' => $user->id,
-                            'route_name' => $routeName,
-                            'determined_role' => $userRole
-                        ]);
-                    }
-                }
-            }
-            
-            // Provide a default for messaging if no specific role is found
-            $roleForDisplay = $isAutoApproved ? ucfirst($userRole) : 'standard user';
-            
-            Log::info('Auto-approval determination', [
-                'user_id' => $user->id,
-                'is_auto_approved' => $isAutoApproved,
-                'role_for_display' => $roleForDisplay
-            ]);
-            
-            // Batch create offset records for all selected employees
-            $offsets = [];
-            $employeeCount = count($request->employee_ids);
-            
-            Log::info('Starting batch creation of offset records', [
-                'employee_count' => $employeeCount
-            ]);
-            
-            foreach ($request->employee_ids as $employeeId) {
-                $offset = new Offset([
-                    'employee_id' => $employeeId,
-                    'date' => $request->date,
-                    'workday' => $request->workday,
-                    'offset_type_id' => $request->offset_type_id,
-                    'hours' => $request->hours,
-                    'reason' => $request->reason,
-                    'status' => $isAutoApproved ? 'approved' : 'pending'
-                ]);
-                
-                // If auto-approved, set approver info
-                if ($isAutoApproved) {
-                    $offset->approved_by = Auth::id();
-                    $offset->approved_at = now();
-                    $offset->remarks = "Auto-approved: Filed by {$roleForDisplay}";
-                    
-                    Log::info('Offset auto-approved', [
-                        'employee_id' => $employeeId,
-                        'approved_by' => Auth::id(),
-                        'status' => 'approved'
-                    ]);
-                }
-                
-                $offset->save();
-                $offsets[] = $offset;
-            }
-            
-            // Get updated list of all offsets to return to the frontend
-            $allOffsets = Offset::with(['employee', 'offset_type'])->latest()->get();
-            
-            $successMessage = $isAutoApproved 
-                ? 'Offset requests created and auto-approved successfully' 
-                : 'Offset requests created successfully';
-            
-            Log::info('Offset store method completed successfully', [
-                'user_id' => Auth::id(),
-                'records_created' => count($offsets),
-                'is_auto_approved' => $isAutoApproved,
-                'message' => $successMessage
-            ]);
-            
-            return redirect()->back()->with([
-                'message' => $successMessage,
-                'offsets' => $allOffsets
-            ]);
-        } catch (\Exception $e) {
-            Log::error('Failed to create offset requests', [
-                'user_id' => Auth::id(),
-                'error_message' => $e->getMessage(),
-                'error_code' => $e->getCode(),
-                'error_file' => $e->getFile(),
-                'error_line' => $e->getLine(),
-                'error_trace' => $e->getTraceAsString(),
-                'request' => $request->all()
-            ]);
-            
-            return redirect()->back()
-                ->with('error', 'Failed to create offset requests: ' . $e->getMessage())
-                ->withInput();
-        }
-    }
-
-    /**
-     * Update the specified offset.
-     */
-    public function update(Request $request, $id)
-    {
-        $offset = Offset::findOrFail($id);
         
-        // Only allow updates if status is pending
-        if ($offset->status !== 'pending') {
-            return redirect()->back()
-                ->with('error', 'Cannot update offset that has already been ' . $offset->status);
+        $user = Auth::user();
+        
+        // Additional validation for 'debit' transaction type
+        if ($validated['transaction_type'] === 'debit') {
+            $employee = Employee::find($validated['employee_id']);
+            $remainingHours = $employee->getRemainingOffsetHours();
+            
+            if ($validated['hours'] > $remainingHours) {
+                return redirect()->back()->with('error', "Insufficient offset hours. Employee only has {$remainingHours} hours available.");
+            }
         }
         
-        $validator = Validator::make($request->all(), [
-            'date' => 'sometimes|required|date',
-            'workday' => 'sometimes|required|date',
-            'offset_type_id' => 'sometimes|required|exists:offset_types,id',
-            'hours' => 'sometimes|required|numeric|min:0.5|max:24',
-            'reason' => 'sometimes|required|string|max:500',
-        ]);
-
-        if ($validator->fails()) {
-            return redirect()->back()
-                ->withErrors($validator)
-                ->withInput();
-        }
-
+        DB::beginTransaction();
+        
         try {
-            // Update fields if they are provided
-            if ($request->has('date')) {
-                $offset->date = $request->date;
-            }
-            
-            if ($request->has('workday')) {
-                $offset->workday = $request->workday;
-            }
-            
-            if ($request->has('offset_type_id')) {
-                $offset->offset_type_id = $request->offset_type_id;
-            }
-            
-            if ($request->has('hours')) {
-                $offset->hours = $request->hours;
-            }
-            
-            if ($request->has('reason')) {
-                $offset->reason = $request->reason;
-            }
-            
-            // Check if current user is superadmin or hrd
-            $user = Auth::user();
-            $isAutoApproved = false;
-            $userRoles = [];
-            
-            // Get user roles
-            if (method_exists($user, 'roles') && $user->roles) {
-                $userRoles = $user->roles->pluck('name')->toArray();
-            } else if (method_exists($user, 'getRoleSlug')) {
-                $roleSlug = $user->getRoleSlug();
-                if ($roleSlug) {
-                    $userRoles[] = $roleSlug;
-                }
-            }
-            
-            // Check if user has superadmin or hrd role
-            $isAutoApproved = in_array('superadmin', $userRoles) || in_array('hrd', $userRoles);
-            
-            // Auto-approve if user is superadmin or hrd
-            if ($isAutoApproved) {
-                $offset->status = 'approved';
-                $offset->approved_by = Auth::id();
-                $offset->approved_at = now();
-                $offset->remarks = 'Auto-approved: Updated by ' . implode(' or ', array_map('ucfirst', $userRoles)) . ' user';
-            }
+            $offset = new Offset();
+            $offset->employee_id = $validated['employee_id'];
+            $offset->offset_type_id = $validated['offset_type_id'];
+            $offset->date = $validated['date'];
+            $offset->workday = $validated['workday'];
+            $offset->hours = $validated['hours'];
+            $offset->reason = $validated['reason'];
+            $offset->transaction_type = $validated['transaction_type'];
+            $offset->status = 'pending';
             
             $offset->save();
             
-            // Get updated list of all offsets to return to the frontend
-            $allOffsets = Offset::with(['employee', 'offset_type'])->latest()->get();
+            DB::commit();
             
-            $successMessage = $isAutoApproved 
-                ? 'Offset updated and auto-approved successfully' 
-                : 'Offset updated successfully';
+            return redirect()->back()->with('message', 'Offset request created successfully');
             
-            return redirect()->back()->with([
-                'message' => $successMessage,
-                'offsets' => $allOffsets
-            ]);
         } catch (\Exception $e) {
-            Log::error('Failed to update offset', [
-                'id' => $id,
-                'error' => $e->getMessage(),
-                'request' => $request->all()
-            ]);
-            
-            return redirect()->back()
-                ->with('error', 'Failed to update offset: ' . $e->getMessage())
-                ->withInput();
+            DB::rollBack();
+            return redirect()->back()->with('error', 'Error creating offset request: ' . $e->getMessage());
         }
     }
 
     /**
-     * Approve or reject an offset request.
+     * Update the status of an offset request.
      */
     public function updateStatus(Request $request, $id)
     {
-        $validator = Validator::make($request->all(), [
-            'status' => 'required|in:approved,rejected',
+        $user = Auth::user();
+        $offset = Offset::findOrFail($id);
+        
+        $validated = $request->validate([
+            'status' => 'required|in:approved,rejected,force_approved',
             'remarks' => 'nullable|string|max:500',
         ]);
 
-        if ($validator->fails()) {
-            return redirect()->back()
-                ->withErrors($validator)
-                ->withInput();
+        // Check permission
+        $canUpdate = false;
+        $isForceApproval = $validated['status'] === 'force_approved';
+        
+        $userRoles = $this->getUserRoles($user);
+        
+        // Only superadmin can force approve
+        if ($isForceApproval && $userRoles['isSuperAdmin']) {
+            $canUpdate = true;
+            // Force approval becomes a regular approval but with admin override
+            $validated['status'] = 'approved';
+        }
+        // Department manager can approve/reject for their department
+        elseif ($userRoles['isDepartmentManager'] && 
+            in_array($offset->employee->Department, $userRoles['managedDepartments']) &&
+            !$isForceApproval) {
+            $canUpdate = true;
+        }
+        // HRD manager or superadmin can approve/reject any request
+        elseif (($userRoles['isHrdManager'] || $userRoles['isSuperAdmin']) && !$isForceApproval) {
+            $canUpdate = true;
         }
 
+        if (!$canUpdate) {
+            return response()->json([
+                'message' => 'You are not authorized to update this offset request.'
+            ], 403);
+        }
+
+        DB::beginTransaction();
+        
         try {
-            $offset = Offset::findOrFail($id);
-            
-            // Only allow status updates if current status is pending
-            if ($offset->status !== 'pending') {
-                return redirect()->back()
-                    ->with('error', 'Cannot update offset that has already been ' . $offset->status);
+            // Special case for force approval by superadmin
+            if ($isForceApproval) {
+                $offset->remarks = 'Administrative override: ' . ($validated['remarks'] ?? 'Force approved by admin');
+            } else {
+                $offset->remarks = $validated['remarks'];
             }
             
-            $offset->status = $request->status;
-            $offset->remarks = $request->remarks;
-            $offset->approved_by = Auth::id();
+            $oldStatus = $offset->status;
+            $offset->status = $validated['status'];
+            $offset->approved_by = $user->id;
             $offset->approved_at = now();
             $offset->save();
             
-            // Get updated list of all offsets to return to the frontend
-            $allOffsets = Offset::with(['employee', 'offset_type'])->latest()->get();
+            // Update offset bank if approved
+            if ($offset->status === 'approved' && $oldStatus !== 'approved') {
+                $employee = $offset->employee;
+                
+                // Create or get offset bank
+                $offsetBank = $employee->offsetBank;
+                if (!$offsetBank) {
+                    $offsetBank = new OffsetBank([
+                        'employee_id' => $employee->id,
+                        'total_hours' => 0,
+                        'used_hours' => 0,
+                        'remaining_hours' => 0,
+                        'last_updated' => now()
+                    ]);
+                    $offsetBank->save();
+                }
+                
+                // Update bank based on transaction type
+                if ($offset->transaction_type === 'credit') {
+                    $offsetBank->addHours($offset->hours, "Credit from offset ID {$offset->id}");
+                } else {
+                    // Check if there are enough hours in the bank
+                    if ($offsetBank->remaining_hours < $offset->hours) {
+                        DB::rollBack();
+                        return response()->json([
+                            'message' => 'Insufficient hours in offset bank. Employee only has ' . $offsetBank->remaining_hours . ' hours available.'
+                        ], 400);
+                    }
+                    
+                    $offsetBank->useHours($offset->hours, "Debit from offset ID {$offset->id}");
+                }
+                
+                $offset->is_bank_updated = true;
+                $offset->save();
+            }
             
-            return redirect()->back()->with([
-                'message' => 'Offset status updated successfully',
-                'offsets' => $allOffsets
+            // Undo bank update if status changed from approved to something else
+            if ($oldStatus === 'approved' && $offset->status !== 'approved' && $offset->is_bank_updated) {
+                $offsetBank = $offset->employee->offsetBank;
+                
+                if ($offsetBank) {
+                    // Reverse the transaction
+                    if ($offset->transaction_type === 'credit') {
+                        // Subtract hours from bank
+                        $offsetBank->useHours($offset->hours, "Reversal of credit from offset ID {$offset->id}");
+                    } else {
+                        // Add hours back to bank
+                        $offsetBank->addHours($offset->hours, "Reversal of debit from offset ID {$offset->id}");
+                    }
+                    
+                    $offset->is_bank_updated = false;
+                    $offset->save();
+                }
+            }
+
+            DB::commit();
+            
+            // Get fresh data
+            $offset = Offset::with(['employee', 'offset_type', 'approver'])->find($offset->id);
+            
+            // Get full updated list
+            $offsets = $this->getFilteredOffsets($user);
+
+            return response()->json([
+                'message' => 'Offset status updated successfully.',
+                'offset' => $offset,
+                'offsets' => $offsets
             ]);
         } catch (\Exception $e) {
-            Log::error('Failed to update offset status', [
-                'id' => $id,
-                'error' => $e->getMessage(),
-                'request' => $request->all()
-            ]);
-            
-            return redirect()->back()
-                ->with('error', 'Failed to update offset status: ' . $e->getMessage())
-                ->withInput();
+            DB::rollBack();
+            return response()->json([
+                'message' => 'Failed to update offset status: ' . $e->getMessage()
+            ], 500);
         }
     }
 
     /**
-     * Remove the specified offset.
+     * Bulk update the status of multiple offset requests.
      */
-    public function destroy($id)
+    public function bulkUpdateStatus(Request $request)
     {
+        $user = Auth::user();
+        
+        $validated = $request->validate([
+            'offset_ids' => 'required|array',
+            'offset_ids.*' => 'required|integer|exists:offsets,id',
+            'status' => 'required|in:approved,rejected,force_approved',
+            'remarks' => 'nullable|string|max:500',
+        ]);
+        
+        $successCount = 0;
+        $failCount = 0;
+        $errors = [];
+        
+        DB::beginTransaction();
+        
         try {
-            $offset = Offset::findOrFail($id);
-            
-            // Only allow deletion if status is pending
-            if ($offset->status !== 'pending') {
-                return redirect()->back()
-                    ->with('error', 'Cannot delete offset that has already been ' . $offset->status);
+            foreach ($validated['offset_ids'] as $offsetId) {
+                $offset = Offset::findOrFail($offsetId);
+                
+                // Check permission
+                $canUpdate = false;
+                $userRoles = $this->getUserRoles($user);
+                
+                // Force approve option for superadmins
+                if ($validated['status'] === 'force_approved' && $userRoles['isSuperAdmin']) {
+                    $canUpdate = true;
+                }
+                // Department manager can approve/reject for their department
+                elseif ($userRoles['isDepartmentManager'] && 
+                    in_array($offset->employee->Department, $userRoles['managedDepartments']) &&
+                    $validated['status'] !== 'force_approved') {
+                    $canUpdate = true;
+                }
+                // HRD manager or superadmin can approve/reject any request
+                elseif (($userRoles['isHrdManager'] || $userRoles['isSuperAdmin']) && 
+                    $validated['status'] !== 'force_approved') {
+                    $canUpdate = true;
+                }
+                
+                if (!$canUpdate) {
+                    $failCount++;
+                    $errors[] = "Not authorized to update offset request #{$offsetId}";
+                    continue;
+                }
+                
+                $oldStatus = $offset->status;
+                
+                // Update the status
+                if ($validated['status'] === 'force_approved') {
+                    $offset->status = 'approved';
+                    $offset->remarks = 'Administrative override: ' . ($validated['remarks'] ?? 'Force approved by admin');
+                } else {
+                    $offset->status = $validated['status'];
+                    $offset->remarks = $validated['remarks'] ?? 'Bulk ' . $validated['status'];
+                }
+                $offset->approved_by = $user->id;
+                $offset->approved_at = now();
+                $offset->save();
+                
+                // Update offset bank if approved
+                if ($offset->status === 'approved' && $oldStatus !== 'approved') {
+                    $employee = $offset->employee;
+                    
+                    // Create or get offset bank
+                    $offsetBank = $employee->offsetBank;
+                    if (!$offsetBank) {
+                        $offsetBank = new OffsetBank([
+                            'employee_id' => $employee->id,
+                            'total_hours' => 0,
+                            'used_hours' => 0,
+                            'remaining_hours' => 0,
+                            'last_updated' => now()
+                        ]);
+                        $offsetBank->save();
+                    }
+                    
+                    // For debit type, check if there are enough hours in the bank
+                    if ($offset->transaction_type === 'debit' && $offsetBank->remaining_hours < $offset->hours) {
+                        $errors[] = "Offset #{$offsetId}: Insufficient hours in offset bank. Employee only has " . $offsetBank->remaining_hours . " hours available.";
+                        $failCount++;
+                        continue;
+                    }
+                    
+                    // Update bank based on transaction type
+                    if ($offset->transaction_type === 'credit') {
+                        $offsetBank->addHours($offset->hours, "Credit from offset ID {$offset->id}");
+                    } else {
+                        $offsetBank->useHours($offset->hours, "Debit from offset ID {$offset->id}");
+                    }
+                    
+                    $offset->is_bank_updated = true;
+                    $offset->save();
+                }
+                
+                $successCount++;
             }
             
-            $offset->delete();
+            DB::commit();
             
-            // Get updated list of all offsets to return to the frontend
-            $allOffsets = Offset::with(['employee', 'offset_type'])->latest()->get();
+            $message = "{$successCount} offset requests updated successfully.";
+            if ($failCount > 0) {
+                $message .= " {$failCount} updates failed.";
+            }
             
             return redirect()->back()->with([
-                'message' => 'Offset deleted successfully',
-                'offsets' => $allOffsets
-            ]);
-        } catch (\Exception $e) {
-            Log::error('Failed to delete offset', [
-                'id' => $id,
-                'error' => $e->getMessage()
+                'message' => $message,
+                'errors' => $errors
             ]);
             
-            return redirect()->back()->with('error', 'Failed to delete offset: ' . $e->getMessage());
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return redirect()->back()->with('error', 'Error updating offset statuses: ' . $e->getMessage());
         }
     }
 
+    private function getFilteredOffsets($user)
+    {
+        $userRoles = $this->getUserRoles($user);
+        
+        $offsetQuery = Offset::with(['employee', 'offset_type', 'approver']);
+        
+        // Filter based on user roles
+        if ($userRoles['isEmployee'] && !$userRoles['isDepartmentManager'] && !$userRoles['isHrdManager'] && !$userRoles['isSuperAdmin']) {
+            $employeeId = $user->employee ? $user->employee->id : null;
+            if ($employeeId) {
+                $offsetQuery->where('employee_id', $employeeId);
+            }
+        } elseif ($userRoles['isDepartmentManager'] && !$userRoles['isSuperAdmin']) {
+            $managedDepartments = DepartmentManager::where('manager_id', $user->id)
+                ->pluck('department')
+                ->toArray();
+                
+            $offsetQuery->whereHas('employee', function($q) use ($managedDepartments) {
+                $q->whereIn('Department', $managedDepartments);
+            });
+        }
+        
+        $offsets = $offsetQuery->orderBy('created_at', 'desc')->get();
+        
+        // Add remaining hours to each offset
+        return $offsets->map(function ($offset) {
+            $employee = $offset->employee;
+            $remainingHours = $employee ? $employee->getRemainingOffsetHours() : 0;
+            
+            return array_merge($offset->toArray(), [
+                'employee_remaining_hours' => $remainingHours
+            ]);
+        });
+    }
+
+    public function destroy($id)
+    {
+        $user = Auth::user();
+        $offset = Offset::findOrFail($id);
+        
+        // Only allow deletion if status is pending and user has permission
+        if ($offset->status !== 'pending') {
+            return back()->with('error', 'Only pending offset requests can be deleted');
+        }
+        
+        $userRoles = $this->getUserRoles($user);
+        $canDelete = false;
+        
+        // Check permissions
+        if ($userRoles['isSuperAdmin']) {
+            $canDelete = true;
+        } elseif ($offset->employee_id === $userRoles['employeeId']) {
+            // Users can delete their own pending requests
+            $canDelete = true;
+        } elseif ($userRoles['isDepartmentManager'] && 
+                in_array($offset->employee->Department, $userRoles['managedDepartments'])) {
+            $canDelete = true;
+        } elseif ($userRoles['isHrdManager']) {
+            $canDelete = true;
+        }
+        
+        if (!$canDelete) {
+            return back()->with('error', 'You are not authorized to delete this offset request');
+        }
+        
+        try {
+            $offset->delete();
+            return back()->with('message', 'Offset request deleted successfully');
+        } catch (\Exception $e) {
+            return back()->with('error', 'Failed to delete offset request: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Export offset requests to Excel.
+     */
     public function export(Request $request)
     {
-        try {
-            // Start with a base query
-            $query = Offset::with(['employee', 'offset_type', 'approver']);
-            
-            // Apply filters if provided
-            if ($request->has('status') && $request->status) {
-                $query->where('status', $request->status);
+        $filterStatus = $request->input('status');
+        $searchTerm = $request->input('search');
+        $fromDate = $request->input('from_date');
+        $toDate = $request->input('to_date');
+        
+        $user = Auth::user();
+        $userRoles = $this->getUserRoles($user);
+        
+        $offsetQuery = Offset::with(['employee', 'offset_type', 'approver']);
+        
+        // Apply role-based filtering
+        if ($userRoles['isEmployee'] && !$userRoles['isDepartmentManager'] && !$userRoles['isHrdManager'] && !$userRoles['isSuperAdmin']) {
+            $employeeId = $user->employee ? $user->employee->id : null;
+            if ($employeeId) {
+                $offsetQuery->where('employee_id', $employeeId);
             }
-            
-            if ($request->has('search') && $request->search) {
-                $search = $request->search;
-                $query->where(function($q) use ($search) {
-                    $q->whereHas('employee', function($subQuery) use ($search) {
-                        $subQuery->where('Fname', 'like', "%{$search}%")
-                            ->orWhere('Lname', 'like', "%{$search}%")
-                            ->orWhere('idno', 'like', "%{$search}%")
-                            ->orWhere('Department', 'like', "%{$search}%");
-                    })
-                    ->orWhere('reason', 'like', "%{$search}%");
-                });
-            }
-            
-            if ($request->has('from_date') && $request->from_date) {
-                $query->whereDate('date', '>=', $request->from_date);
-            }
-            
-            if ($request->has('to_date') && $request->to_date) {
-                $query->whereDate('date', '<=', $request->to_date);
-            }
-            
-            // Get the filtered offsets
-            $offsets = $query->latest()->get();
-            
-            // Create a spreadsheet
-            $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
-            $sheet = $spreadsheet->getActiveSheet();
-            
-            // Set headers
-            $sheet->setCellValue('A1', 'ID');
-            $sheet->setCellValue('B1', 'Employee ID');
-            $sheet->setCellValue('C1', 'Employee Name');
-            $sheet->setCellValue('D1', 'Department');
-            $sheet->setCellValue('E1', 'Position');
-            $sheet->setCellValue('F1', 'Work Date');
-            $sheet->setCellValue('G1', 'Offset Date');
-            $sheet->setCellValue('H1', 'Hours');
-            $sheet->setCellValue('I1', 'Offset Type');
-            $sheet->setCellValue('J1', 'Status');
-            $sheet->setCellValue('K1', 'Reason');
-            $sheet->setCellValue('L1', 'Remarks');
-            $sheet->setCellValue('M1', 'Filed Date');
-            $sheet->setCellValue('N1', 'Action Date');
-            $sheet->setCellValue('O1', 'Approved/Rejected By');
-            
-            // Style headers
-            $headerStyle = [
-                'font' => [
-                    'bold' => true,
-                    'color' => ['rgb' => 'FFFFFF'],
-                ],
-                'fill' => [
-                    'fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID,
-                    'startColor' => ['rgb' => '4472C4'],
-                ],
-                'borders' => [
-                    'allBorders' => [
-                        'borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN,
-                    ],
-                ],
-            ];
-            
-            $sheet->getStyle('A1:O1')->applyFromArray($headerStyle);
-            
-            // Auto-adjust column width
-            foreach(range('A', 'O') as $column) {
-                $sheet->getColumnDimension($column)->setAutoSize(true);
-            }
-            
-            // Fill data
-            $row = 2;
-            foreach ($offsets as $offset) {
-                $sheet->setCellValue('A' . $row, $offset->id);
-                $sheet->setCellValue('B' . $row, $offset->employee->idno ?? 'N/A');
-                $sheet->setCellValue('C' . $row, $offset->employee ? "{$offset->employee->Lname}, {$offset->employee->Fname} {$offset->employee->MName}" : 'Unknown');
-                $sheet->setCellValue('D' . $row, $offset->employee->Department ?? 'N/A');
-                $sheet->setCellValue('E' . $row, $offset->employee->Jobtitle ?? 'N/A');
-                $sheet->setCellValue('F' . $row, $offset->date ? Carbon::parse($offset->date)->format('Y-m-d') : 'N/A');
-                $sheet->setCellValue('G' . $row, $offset->workday ? Carbon::parse($offset->workday)->format('Y-m-d') : 'N/A');
-                $sheet->setCellValue('H' . $row, $offset->hours ?? 'N/A');
-                $sheet->setCellValue('I' . $row, $offset->offset_type ? $offset->offset_type->name : 'N/A');
-                $sheet->setCellValue('J' . $row, ucfirst($offset->status));
-                $sheet->setCellValue('K' . $row, $offset->reason ?? 'N/A');
-                $sheet->setCellValue('L' . $row, $offset->remarks ?? 'N/A');
-                $sheet->setCellValue('M' . $row, $offset->created_at ? Carbon::parse($offset->created_at)->format('Y-m-d h:i A') : 'N/A');
-                $sheet->setCellValue('N' . $row, $offset->approved_at ? Carbon::parse($offset->approved_at)->format('Y-m-d h:i A') : 'N/A');
-                $sheet->setCellValue('O' . $row, $offset->approver ? $offset->approver->name : 'N/A');
+        } elseif ($userRoles['isDepartmentManager'] && !$userRoles['isSuperAdmin']) {
+            $managedDepartments = DepartmentManager::where('manager_id', $user->id)
+                ->pluck('department')
+                ->toArray();
                 
-                // Apply status-based styling
+            $offsetQuery->whereHas('employee', function($q) use ($managedDepartments) {
+                $q->whereIn('Department', $managedDepartments);
+            });
+        }
+        
+        // Apply filters
+        if ($filterStatus) {
+            $offsetQuery->where('status', $filterStatus);
+        }
+        
+        if ($searchTerm) {
+            $offsetQuery->where(function($query) use ($searchTerm) {
+                $query->whereHas('employee', function($q) use ($searchTerm) {
+                    $q->where('Fname', 'like', "%{$searchTerm}%")
+                      ->orWhere('Lname', 'like', "%{$searchTerm}%")
+                      ->orWhere('idno', 'like', "%{$searchTerm}%")
+                      ->orWhere('Department', 'like', "%{$searchTerm}%");
+                })
+                ->orWhere('reason', 'like', "%{$searchTerm}%");
+            });
+        }
+        
+        if ($fromDate) {
+            $offsetQuery->whereDate('date', '>=', $fromDate);
+        }
+        
+        if ($toDate) {
+            $offsetQuery->whereDate('date', '<=', $toDate);
+        }
+        
+        $offsets = $offsetQuery->orderBy('created_at', 'desc')->get();
+        
+        // Create Excel file
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        
+        // Set headers
+        $sheet->setCellValue('A1', 'ID');
+        $sheet->setCellValue('B1', 'Employee ID');
+        $sheet->setCellValue('C1', 'Employee Name');
+        $sheet->setCellValue('D1', 'Department');
+        $sheet->setCellValue('E1', 'Type');
+        $sheet->setCellValue('F1', 'Transaction');
+        $sheet->setCellValue('G1', 'Date');
+        $sheet->setCellValue('H1', 'Workday');
+        $sheet->setCellValue('I1', 'Hours');
+        $sheet->setCellValue('J1', 'Reason');
+        $sheet->setCellValue('K1', 'Status');
+        $sheet->setCellValue('L1', 'Approved By');
+        $sheet->setCellValue('M1', 'Approved Date');
+        $sheet->setCellValue('N1', 'Remarks');
+        $sheet->setCellValue('O1', 'Created Date');
+        $sheet->setCellValue('P1', 'Remaining Hours');
+        
+        // Add data
+        $row = 2;
+        foreach ($offsets as $offset) {
+            $employee = $offset->employee;
+            $bank = $employee ? $employee->offsetBank : null;
+            $remainingHours = $bank ? $bank->remaining_hours : 0;
+            
+            $sheet->setCellValue('A' . $row, $offset->id);
+            $sheet->setCellValue('B' . $row, $offset->employee ? $offset->employee->idno : '');
+            $sheet->setCellValue('C' . $row, $offset->employee ? $offset->employee->Lname . ', ' . $offset->employee->Fname : '');
+            $sheet->setCellValue('D' . $row, $offset->employee ? $offset->employee->Department : '');
+            $sheet->setCellValue('E' . $row, $offset->offset_type ? $offset->offset_type->name : '');
+            $sheet->setCellValue('F' . $row, ucfirst($offset->transaction_type));
+            $sheet->setCellValue('G' . $row, $offset->date ? Carbon::parse($offset->date)->format('Y-m-d') : '');
+            $sheet->setCellValue('H' . $row, $offset->workday ? Carbon::parse($offset->workday)->format('Y-m-d') : '');
+            $sheet->setCellValue('I' . $row, $offset->hours);
+            $sheet->setCellValue('J' . $row, $offset->reason);
+            $sheet->setCellValue('K' . $row, ucfirst($offset->status));
+            $sheet->setCellValue('L' . $row, $offset->approver ? $offset->approver->name : '');
+            $sheet->setCellValue('M' . $row, $offset->approved_at ? Carbon::parse($offset->approved_at)->format('Y-m-d H:i:s') : '');
+            $sheet->setCellValue('N' . $row, $offset->remarks);
+            $sheet->setCellValue('O' . $row, $offset->created_at ? Carbon::parse($offset->created_at)->format('Y-m-d H:i:s') : '');
+            $sheet->setCellValue('P' . $row, $remainingHours);
+            $row++;
+        }
+        
+        // Auto-size columns
+        foreach (range('A', 'P') as $column) {
+            $sheet->getColumnDimension($column)->setAutoSize(true);
+        }
+        
+        // Create writer and save
+        $writer = new Xlsx($spreadsheet);
+        $filename = 'Offset_Requests_' . date('Y-m-d_H-i-s') . '.xlsx';
+        
+        $tempFile = tempnam(sys_get_temp_dir(), 'offset_export_');
+        $writer->save($tempFile);
+        
+        return response()->download($tempFile, $filename, [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ])->deleteFileAfterSend(true);
+    }
+
+    /**
+     * Force approve offset requests (admin only).
+     */
+    public function forceApprove(Request $request)
+    {
+        // Ensure only superadmins can force approve
+        if (!$this->isSuperAdmin(Auth::user())) {
+            return back()->with('error', 'Only administrators can force approve offset requests.');
+        }
+        
+        $validated = $request->validate([
+            'offset_ids' => 'required|array',
+            'offset_ids.*' => 'required|integer|exists:offsets,id',
+            'remarks' => 'nullable|string|max:500',
+        ]);
+        
+        $user = Auth::user();
+        $remarks = $validated['remarks'] ?? 'Administrative override: Force approved by admin';
+        $successCount = 0;
+        $failCount = 0;
+        $errors = [];
+        
+        // Log the force approval action
+        \Log::info('Force approval of offset initiated', [
+            'admin_id' => $user->id,
+            'admin_name' => $user->name,
+            'count' => count($validated['offset_ids'])
+        ]);
+        
+        DB::beginTransaction();
+        
+        try {
+            foreach ($validated['offset_ids'] as $offsetId) {
+                $offset = Offset::findOrFail($offsetId);
+                
+                // Skip already approved offsets
                 if ($offset->status === 'approved') {
-                    $sheet->getStyle('J' . $row)->applyFromArray([
-                        'font' => ['color' => ['rgb' => '008000']], // Green for approved
-                    ]);
-                } elseif ($offset->status === 'rejected') {
-                    $sheet->getStyle('J' . $row)->applyFromArray([
-                        'font' => ['color' => ['rgb' => 'FF0000']], // Red for rejected
-                    ]);
-                } elseif ($offset->status === 'pending') {
-                    $sheet->getStyle('J' . $row)->applyFromArray([
-                        'font' => ['color' => ['rgb' => 'FFA500']], // Orange for pending
-                    ]);
+                    $errors[] = "Offset #{$offsetId} is already approved";
+                    $failCount++;
+                    continue;
                 }
                 
-                $row++;
-            }
-            
-            // Add borders to all data cells
-            $lastRow = $row - 1;
-            if ($lastRow >= 2) {
-                $sheet->getStyle('A2:O' . $lastRow)->applyFromArray([
-                    'borders' => [
-                        'allBorders' => [
-                            'borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN,
-                        ],
-                    ],
+                $oldStatus = $offset->status;
+                
+                // Force approve
+                $offset->status = 'approved';
+                $offset->approved_by = $user->id;
+                $offset->approved_at = now();
+                $offset->remarks = 'Administrative override: ' . $remarks;
+                $offset->save();
+                
+                // Update offset bank
+                if ($oldStatus !== 'approved') {
+                    $employee = $offset->employee;
+                    
+                    // Create or get offset bank
+                    $offsetBank = $employee->offsetBank;
+                    if (!$offsetBank) {
+                        $offsetBank = new OffsetBank([
+                            'employee_id' => $employee->id,
+                            'total_hours' => 0,
+                            'used_hours' => 0,
+                            'remaining_hours' => 0,
+                            'last_updated' => now()
+                        ]);
+                        $offsetBank->save();
+                    }
+                    
+                    // For debit type, check if there are enough hours in the bank
+                    if ($offset->transaction_type === 'debit' && $offsetBank->remaining_hours < $offset->hours) {
+                        $errors[] = "Offset #{$offsetId}: Insufficient hours in offset bank. Employee only has " . $offsetBank->remaining_hours . " hours available.";
+                        
+                        // Skip this offset but continue processing others
+                        $offset->status = $oldStatus; // Revert status change
+                        $offset->approved_by = null;
+                        $offset->approved_at = null;
+                        $offset->remarks = null;
+                        $offset->save();
+                        
+                        $failCount++;
+                        continue;
+                    }
+                    
+                    // Update bank based on transaction type
+                    if ($offset->transaction_type === 'credit') {
+                        $offsetBank->addHours($offset->hours, "Credit from offset ID {$offset->id} (force approved)");
+                    } else {
+                        $offsetBank->useHours($offset->hours, "Debit from offset ID {$offset->id} (force approved)");
+                    }
+                    
+                    $offset->is_bank_updated = true;
+                    $offset->save();
+                }
+                
+                $successCount++;
+                
+                // Log individual approvals
+                \Log::info("Force approved offset #{$offsetId}", [
+                    'admin_id' => $user->id,
+                    'offset_id' => $offsetId,
+                    'previous_status' => $oldStatus
                 ]);
             }
             
-            // Set the filename
-            $filename = 'Offset_Report_' . Carbon::now()->format('Y-m-d_His') . '.xlsx';
+            DB::commit();
             
-            // Create the Excel file
-            $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($spreadsheet);
+            // Create appropriate flash message
+            $message = "{$successCount} offset requests force approved successfully.";
+            if ($failCount > 0) {
+                $message .= " {$failCount} force approvals failed.";
+            }
             
-            // Set header information for download
-            header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-            header('Content-Disposition: attachment;filename="' . $filename . '"');
-            header('Cache-Control: max-age=0');
-            
-            // Save file to php://output
-            $writer->save('php://output');
-            exit;
-            
-        } catch (\Exception $e) {
-            Log::error('Failed to export offset data', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+            // Return with message
+            return back()->with([
+                'message' => $message,
+                'errors' => $errors
             ]);
             
-            return redirect()->back()->with('error', 'Failed to export offset data: ' . $e->getMessage());
+        } catch (\Exception $e) {
+            DB::rollBack();
+            \Log::error("Error during force approval: " . $e->getMessage());
+            return back()->with('error', 'Error during force approval: ' . $e->getMessage());
         }
+    }
+    
+    /**
+     * Add hours directly to an employee's offset bank.
+     */
+    public function addHoursToBank(Request $request)
+    {
+        // Only HRD manager and superadmin can add hours directly
+        $user = Auth::user();
+        $userRoles = $this->getUserRoles($user);
+        
+        if (!$userRoles['isHrdManager'] && !$userRoles['isSuperAdmin']) {
+            return response()->json([
+                'message' => 'You are not authorized to perform this action.'
+            ], 403);
+        }
+        
+        $validated = $request->validate([
+            'employee_id' => 'required|integer|exists:employees,id',
+            'hours' => 'required|numeric|min:0.5|max:100',
+            'notes' => 'nullable|string|max:500',
+        ]);
+        
+        DB::beginTransaction();
+        
+        try {
+            $employee = Employee::find($validated['employee_id']);
+            
+            // Create or get offset bank
+            $offsetBank = $employee->offsetBank;
+            if (!$offsetBank) {
+                $offsetBank = new OffsetBank([
+                    'employee_id' => $employee->id,
+                    'total_hours' => 0,
+                    'used_hours' => 0,
+                    'remaining_hours' => 0,
+                    'last_updated' => now()
+                ]);
+                $offsetBank->save();
+            }
+            
+            // Add hours to bank
+            $notes = $validated['notes'] ?? "Manual addition by {$user->name}";
+            $offsetBank->addHours($validated['hours'], $notes);
+            
+            DB::commit();
+            
+            return response()->json([
+                'message' => 'Hours added to offset bank successfully.',
+                'offset_bank' => $offsetBank
+            ]);
+            
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'message' => 'Failed to add hours to offset bank: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+    
+    /**
+     * Get the offset bank details for an employee.
+     */
+    public function getOffsetBank($employeeId)
+    {
+        $employee = Employee::findOrFail($employeeId);
+        $offsetBank = $employee->offsetBank;
+        
+        if (!$offsetBank) {
+            return response()->json([
+                'employee' => [
+                    'id' => $employee->id,
+                    'name' => "{$employee->Lname}, {$employee->Fname}",
+                    'department' => $employee->Department,
+                ],
+                'offset_bank' => [
+                    'total_hours' => 0,
+                    'used_hours' => 0,
+                    'remaining_hours' => 0,
+                    'last_updated' => null,
+                ]
+            ]);
+        }
+        
+        return response()->json([
+            'employee' => [
+                'id' => $employee->id,
+                'name' => "{$employee->Lname}, {$employee->Fname}",
+                'department' => $employee->Department,
+            ],
+            'offset_bank' => [
+                'total_hours' => $offsetBank->total_hours,
+                'used_hours' => $offsetBank->used_hours,
+                'remaining_hours' => $offsetBank->remaining_hours,
+                'last_updated' => $offsetBank->last_updated ? Carbon::parse($offsetBank->last_updated)->format('Y-m-d H:i:s') : null,
+                'notes' => $offsetBank->notes,
+            ]
+        ]);
+    }
+    
+    private function isSuperAdmin($user)
+    {
+        if (method_exists($user, 'roles') && $user->roles && $user->roles->count() > 0) {
+            if ($user->roles->contains('name', 'superadmin') || $user->roles->contains('slug', 'superadmin')) {
+                return true;
+            }
+        }
+        
+        if (method_exists($user, 'hasRole') && $user->hasRole('superadmin')) {
+            return true;
+        }
+        
+        return false;
+    }
+
+    private function isHrdManager($user)
+    {
+        if (method_exists($user, 'roles') && $user->roles && $user->roles->count() > 0) {
+            if ($user->roles->contains('name', 'hrd_manager') || $user->roles->contains('slug', 'hrd')) {
+                return true;
+            }
+        }
+        
+        if (method_exists($user, 'hasRole') && $user->hasRole('hrd_manager')) {
+            return true;
+        }
+        
+        return false;
     }
 }

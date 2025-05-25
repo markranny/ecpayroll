@@ -257,19 +257,36 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
     // HR-Related Routes
     Route::middleware('role:hrd_manager,superadmin')->group(function () {
-        // Offset Routes
         Route::get('/offsets', [OffsetController::class, 'index'])
-            ->name('offsets.index');
-        Route::post('/offsets', [OffsetController::class, 'store'])
-            ->name('offsets.store');
-        Route::put('/offsets/{id}', [OffsetController::class, 'update'])
-            ->name('offsets.update');
-        Route::post('/offsets/{id}/status', [OffsetController::class, 'updateStatus'])
-            ->name('offsets.updateStatus');
-        Route::delete('/offsets/{id}', [OffsetController::class, 'destroy'])
-            ->name('offsets.destroy');
-        Route::get('/offsets/export', [OffsetController::class, 'export'])
-            ->name('offsets.export');
+        ->name('offsets.index');
+    Route::post('/offsets', [OffsetController::class, 'store'])
+        ->name('offsets.store');
+    Route::post('/offsets/{id}/status', [OffsetController::class, 'updateStatus'])
+        ->name('offsets.updateStatus');
+    Route::delete('/offsets/{id}', [OffsetController::class, 'destroy'])
+        ->name('offsets.destroy');
+    Route::get('/offsets/export', [OffsetController::class, 'export'])
+        ->name('offsets.export');
+    Route::get('/offsets/bank/{employeeId}', [OffsetController::class, 'getOffsetBank'])
+        ->name('offsets.getOffsetBank');
+    
+    // Bulk Actions for managers
+    Route::middleware('role:department_manager,hrd_manager,superadmin')->group(function () {
+        Route::post('/offsets/bulk-update', [OffsetController::class, 'bulkUpdateStatus'])
+            ->name('offsets.bulkUpdateStatus');
+        
+        // Force approve route (superadmin only)
+        Route::middleware('role:superadmin')->group(function () {
+            Route::post('/offsets/force-approve', [OffsetController::class, 'forceApprove'])
+                ->name('offsets.force-approve');
+        });
+    });
+    
+    // Add hours to bank (HRD manager and superadmin only)
+    Route::middleware('role:hrd_manager,superadmin')->group(function () {
+        Route::post('/offsets/add-hours-to-bank', [OffsetController::class, 'addHoursToBank'])
+            ->name('offsets.addHoursToBank');
+    });
 
         // Change Off Schedule Routes
         /* Route::get('/change-off-schedules', [ChangeOffScheduleController::class, 'index'])
