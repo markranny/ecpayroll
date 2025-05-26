@@ -1,5 +1,5 @@
 // In OvertimeDetailModal.jsx
-// Add a view-only mode and modify the component to hide approval sections
+// Corrected version with proper modal management and status handling
 
 import React, { useState } from 'react';
 import { format } from 'date-fns';
@@ -17,9 +17,8 @@ const OvertimeDetailModal = ({ overtime, onClose, onStatusUpdate, userRoles = {}
             return;
         }
         
-        // If status isn't changing and no remarks provided, inform the user
-        if (status === overtime.status && !remarks.trim()) {
-            alert('Please provide remarks or select a different status');
+        if (status === 'force_approved' && !remarks.trim()) {
+            alert('Please provide remarks for force approval');
             return;
         }
         
@@ -28,19 +27,31 @@ const OvertimeDetailModal = ({ overtime, onClose, onStatusUpdate, userRoles = {}
         // Create data object with status and remarks
         const data = {
             status: status,
-            remarks: remarks
+            remarks: remarks.trim()
         };
         
         // Call the onStatusUpdate with id and data
         if (typeof onStatusUpdate === 'function') {
-            onStatusUpdate(overtime.id, data)
-                .catch(error => {
-                    console.error('Error updating status:', error);
-                    alert('Error: Unable to update status. Please try again later.');
-                })
-                .finally(() => {
-                    setProcessing(false);
-                });
+            const result = onStatusUpdate(overtime.id, data);
+            
+            // Handle both Promise and non-Promise returns
+            if (result && typeof result.then === 'function') {
+                result
+                    .then(() => {
+                        setProcessing(false);
+                        // Close modal after successful update
+                        onClose();
+                    })
+                    .catch(error => {
+                        console.error('Error updating status:', error);
+                        alert('Error: Unable to update status. Please try again later.');
+                        setProcessing(false);
+                    });
+            } else {
+                // If not a promise, assume it completed successfully
+                setProcessing(false);
+                onClose();
+            }
         } else {
             console.error('onStatusUpdate is not a function');
             alert('Error: Unable to update status. Please try again later.');
@@ -61,7 +72,28 @@ const OvertimeDetailModal = ({ overtime, onClose, onStatusUpdate, userRoles = {}
     // Format time safely
     const formatTime = (timeString) => {
         try {
-            return format(new Date(timeString), 'h:mm a');
+            if (!timeString) return 'N/A';
+            
+            let timeOnly;
+            // Handle ISO 8601 format
+            if (timeString.includes('T')) {
+                const [, time] = timeString.split('T');
+                timeOnly = time.slice(0, 5); // Extract HH:MM
+            } else {
+                // If the time includes a date, split and take the time part
+                const timeParts = timeString.split(' ');
+                timeOnly = timeParts[timeParts.length - 1].slice(0, 5);
+            }
+            
+            // Parse hours and minutes
+            const [hours, minutes] = timeOnly.split(':');
+            const hourNum = parseInt(hours, 10);
+            
+            // Convert to 12-hour format with AM/PM
+            const ampm = hourNum >= 12 ? 'PM' : 'AM';
+            const formattedHours = hourNum % 12 || 12; // handle midnight and noon
+            
+            return `${formattedHours}:${minutes} ${ampm}`;
         } catch (error) {
             console.error('Error formatting time:', error);
             return 'Invalid time';
@@ -78,19 +110,21 @@ const OvertimeDetailModal = ({ overtime, onClose, onStatusUpdate, userRoles = {}
         }
     };
     
-    // Enhanced role checks
-    const isDepartmentManager = userRoles.isDepartmentManager || false;
-    const isHrdManager = userRoles.isHrdManager || false;
-    const isSuperAdmin = userRoles.isSuperAdmin || false;
+    // Enhanced role checks with null safety
+    const isDepartmentManager = userRoles?.isDepartmentManager || false;
+    const isHrdManager = userRoles?.isHrdManager || false;
+    const isSuperAdmin = userRoles?.isSuperAdmin || false;
     
     // Determine if user can approve at department level
     const canApproveDept = (
-        !viewOnly && (
+        !viewOnly && 
+        !processing &&
+        (
             isSuperAdmin || 
             (isDepartmentManager && 
             overtime.status === 'pending' &&
-            (overtime.dept_manager_id === userRoles.userId || 
-                (userRoles.managedDepartments && 
+            (overtime.dept_manager_id === userRoles?.userId || 
+                (userRoles?.managedDepartments && 
                 overtime.employee && 
                 userRoles.managedDepartments.includes(overtime.employee.Department))
             )
@@ -99,15 +133,41 @@ const OvertimeDetailModal = ({ overtime, onClose, onStatusUpdate, userRoles = {}
     );
     
     // Determine if user can approve at HRD level
-    const canApproveHrd = 
-        !viewOnly && (
+    const canApproveHrd = (
+        !viewOnly && 
+        !processing &&
+        (
             isSuperAdmin || 
-            (isHrdManager && 
-            overtime.status === 'manager_approved')
-        );
+            (isHrdManager && overtime.status === 'manager_approved')
+        )
+    );
+
+    // Determine if user can force approve (superadmin only)
+    const canForceApprove = (
+        !viewOnly && 
+        !processing &&
+        isSuperAdmin && 
+        overtime.status !== 'approved' && 
+        overtime.status !== 'force_approved'
+    );
+
+    // Handle modal click to prevent closing when clicking inside
+    const handleModalClick = (e) => {
+        e.stopPropagation();
+    };
+
+    // Handle backdrop click to close modal
+    const handleBackdropClick = (e) => {
+        if (e.target === e.currentTarget && !processing) {
+            onClose();
+        }
+    };
 
     return (
-        <div className="fixed inset-0 z-50 overflow-y-auto">
+        <div 
+            className="fixed inset-0 z-50 overflow-y-auto" 
+            onClick={handleBackdropClick}
+        >
             <div className="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
                 <div className="fixed inset-0 transition-opacity" aria-hidden="true">
                     <div className="absolute inset-0 bg-gray-500 opacity-75"></div>
@@ -115,7 +175,20 @@ const OvertimeDetailModal = ({ overtime, onClose, onStatusUpdate, userRoles = {}
                 
                 <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
                 
-                <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full">
+                <div 
+                    className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full"
+                    onClick={handleModalClick}
+                >
+                    {/* Processing overlay */}
+                    {processing && (
+                        <div className="absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center z-10">
+                            <div className="text-center">
+                                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto mb-2"></div>
+                                <p className="text-sm text-gray-600">Updating overtime status...</p>
+                            </div>
+                        </div>
+                    )}
+
                     <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
                         <div className="sm:flex sm:items-start">
                             <div className="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left w-full">
@@ -133,7 +206,7 @@ const OvertimeDetailModal = ({ overtime, onClose, onStatusUpdate, userRoles = {}
                                     <div className="text-sm font-medium text-gray-500">Employee Name</div>
                                     <div className="mt-1 text-sm text-gray-900 sm:mt-0">
                                         {overtime.employee ? 
-                                            `${overtime.employee.Lname}, ${overtime.employee.Fname} ${overtime.employee.MName || ''}` 
+                                            `${overtime.employee.Lname}, ${overtime.employee.Fname} ${overtime.employee.MName || ''}`.trim()
                                             : 'N/A'}
                                     </div>
                                     
@@ -279,10 +352,39 @@ const OvertimeDetailModal = ({ overtime, onClose, onStatusUpdate, userRoles = {}
                                                 <span className="font-medium">Remarks:</span> {overtime.hrd_remarks}
                                             </div>
                                         )}
+
+                                        {/* Force Approval Status */}
+                                        {(overtime.status === 'force_approved' || overtime.admin_remarks) && (
+                                            <div className="mt-4 pt-3 border-t border-gray-200">
+                                                <div className="flex items-start justify-between">
+                                                    <div>
+                                                        <div className="text-sm font-medium text-gray-700">Administrative Action</div>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <div className="text-sm font-medium">
+                                                            <span className="text-purple-600">Force Approved</span>
+                                                        </div>
+                                                        {overtime.admin_approved_at && (
+                                                            <div className="text-xs text-gray-500 mt-1">
+                                                                {formatDateTime(overtime.admin_approved_at)}
+                                                                {overtime.adminApprover && (
+                                                                    <span> by {overtime.adminApprover.name}</span>
+                                                                )}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                {overtime.admin_remarks && (
+                                                    <div className="border border-purple-200 rounded p-2 text-sm text-gray-700 bg-purple-50 mt-2">
+                                                        <span className="font-medium">Admin Remarks:</span> {overtime.admin_remarks}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                                 
-                                {/* Department Manager Approval Form - only show if canApproveDept is true */}
+                                {/* Department Manager Approval Form */}
                                 {canApproveDept && (
                                     <div className="mt-6 border-t border-gray-200 pt-4">
                                         <h4 className="text-md font-medium text-gray-900 mb-3">Department Manager Decision</h4>
@@ -297,19 +399,20 @@ const OvertimeDetailModal = ({ overtime, onClose, onStatusUpdate, userRoles = {}
                                                 value={remarks}
                                                 onChange={(e) => setRemarks(e.target.value)}
                                                 placeholder="Enter any comments or reasons for approval/rejection"
+                                                disabled={processing}
                                             ></textarea>
                                         </div>
                                         
                                         <div className="flex justify-end space-x-3">
                                             <button
-                                                className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+                                                className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed"
                                                 onClick={() => handleStatusChange('manager_approved')}
                                                 disabled={processing}
                                             >
                                                 {processing ? 'Processing...' : 'Approve (Dept. Level)'}
                                             </button>
                                             <button
-                                                className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                                                className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50 disabled:cursor-not-allowed"
                                                 onClick={() => handleStatusChange('rejected')}
                                                 disabled={processing}
                                             >
@@ -319,7 +422,7 @@ const OvertimeDetailModal = ({ overtime, onClose, onStatusUpdate, userRoles = {}
                                     </div>
                                 )}
                                 
-                                {/* HRD Manager Approval Form - only show if canApproveHrd is true */}
+                                {/* HRD Manager Approval Form */}
                                 {canApproveHrd && (
                                     <div className="mt-6 border-t border-gray-200 pt-4">
                                         <h4 className="text-md font-medium text-gray-900 mb-3">HRD Manager Final Decision</h4>
@@ -334,19 +437,20 @@ const OvertimeDetailModal = ({ overtime, onClose, onStatusUpdate, userRoles = {}
                                                 value={remarks}
                                                 onChange={(e) => setRemarks(e.target.value)}
                                                 placeholder="Enter any comments or reasons for approval/rejection"
+                                                disabled={processing}
                                             ></textarea>
                                         </div>
                                         
                                         <div className="flex justify-end space-x-3">
                                             <button
-                                                className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+                                                className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed"
                                                 onClick={() => handleStatusChange('approved')}
                                                 disabled={processing}
                                             >
                                                 {processing ? 'Processing...' : 'Final Approve'}
                                             </button>
                                             <button
-                                                className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                                                className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50 disabled:cursor-not-allowed"
                                                 onClick={() => handleStatusChange('rejected')}
                                                 disabled={processing}
                                             >
@@ -356,8 +460,8 @@ const OvertimeDetailModal = ({ overtime, onClose, onStatusUpdate, userRoles = {}
                                     </div>
                                 )}
 
-                                {/* Force Approve Button (Superadmin Only) */}
-                                {isSuperAdmin && !viewOnly && overtime.status !== 'approved' && (
+                                {/* Force Approve Section (Superadmin Only) */}
+                                {canForceApprove && (
                                     <div className="mt-6 border-t border-gray-200 pt-4">
                                         <h4 className="text-md font-medium text-gray-900 mb-3">
                                             Administrative Actions
@@ -387,22 +491,23 @@ const OvertimeDetailModal = ({ overtime, onClose, onStatusUpdate, userRoles = {}
                                         
                                         <div className="mb-4">
                                             <label className="block text-sm font-medium text-gray-700 mb-1">
-                                                Admin Remarks
+                                                Admin Remarks <span className="text-red-600">*</span>
                                             </label>
                                             <textarea
                                                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                                 rows={3}
                                                 value={remarks}
                                                 onChange={(e) => setRemarks(e.target.value)}
-                                                placeholder="Enter remarks for this administrative action"
+                                                placeholder="Enter remarks for this administrative action (required)"
+                                                disabled={processing}
                                             ></textarea>
                                         </div>
                                         
                                         <div className="flex justify-end">
                                             <button
-                                                className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+                                                className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 disabled:opacity-50 disabled:cursor-not-allowed"
                                                 onClick={() => handleStatusChange('force_approved')}
-                                                disabled={processing}
+                                                disabled={processing || !remarks.trim()}
                                             >
                                                 {processing ? 'Processing...' : 'Force Approve'}
                                             </button>
@@ -415,11 +520,11 @@ const OvertimeDetailModal = ({ overtime, onClose, onStatusUpdate, userRoles = {}
                     <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
                         <button 
                             type="button" 
-                            className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+                            className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                             onClick={onClose}
                             disabled={processing}
                         >
-                            Close
+                            {processing ? 'Processing...' : 'Close'}
                         </button>
                     </div>
                 </div>

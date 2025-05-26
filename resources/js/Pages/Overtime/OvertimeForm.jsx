@@ -304,7 +304,8 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
                     <div className="md:col-span-2 bg-gray-50 p-4 rounded-lg">
                         <h4 className="font-medium mb-3">Select Employees</h4>
                         
-                        {/* Quick Department Selection */}
+                        {/* Quick Department Selection - COMMENTED OUT */}
+                        {/*
                         <div className="mb-4">
                             <label className="block text-sm font-medium text-gray-700 mb-2">
                                 Quick Department Selection
@@ -332,6 +333,7 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
                                 Click department buttons to select/deselect all employees from that department
                             </p>
                         </div>
+                        */}
                         
                         <div className="flex flex-col md:flex-row space-y-2 md:space-y-0 md:space-x-2 mb-4">
                             <div className="flex-1">
