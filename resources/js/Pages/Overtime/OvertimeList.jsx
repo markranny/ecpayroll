@@ -1,7 +1,6 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { format } from 'date-fns';
-import { Download, Search, X, Filter } from 'lucide-react';
+import { Download, Search, X, Filter, Loader2 } from 'lucide-react';
 import OvertimeStatusBadge from './OvertimeStatusBadge';
 import OvertimeDetailModal from './OvertimeDetailModal';
 import MultiBulkActionModal from './MultiBulkActionModal';
@@ -14,7 +13,8 @@ const OvertimeList = ({
     onStatusUpdate, 
     onDelete, 
     refreshInterval = 5000,
-    userRoles = {}
+    userRoles = {},
+    processing = false // Add this prop from parent
 }) => {
     const [selectedOvertime, setSelectedOvertime] = useState(null);
     const [showModal, setShowModal] = useState(false);
@@ -23,8 +23,11 @@ const OvertimeList = ({
     const [localOvertimes, setLocalOvertimes] = useState(overtimes || []);
     const timerRef = useRef(null);
     
-    // Add processing state to track API operations
-    const [processing, setProcessing] = useState(false);
+    // Loading states for various operations
+    const [localProcessing, setLocalProcessing] = useState(false);
+    const [deletingId, setDeletingId] = useState(null);
+    const [updatingId, setUpdatingId] = useState(null);
+    const [exporting, setExporting] = useState(false);
     
     // Search functionality
     const [searchTerm, setSearchTerm] = useState('');
@@ -58,16 +61,18 @@ const OvertimeList = ({
             }
         };
         
-        // Set up interval
-        timerRef.current = setInterval(refreshData, refreshInterval);
+        // Set up interval only if not processing
+        if (!processing && !localProcessing) {
+            timerRef.current = setInterval(refreshData, refreshInterval);
+        }
         
-        // Clean up on component unmount
+        // Clean up on component unmount or when processing starts
         return () => {
             if (timerRef.current) {
                 clearInterval(timerRef.current);
             }
         };
-    }, [refreshInterval, filterStatus, searchTerm, dateRange]);
+    }, [refreshInterval, filterStatus, searchTerm, dateRange, processing, localProcessing]);
     
     // Function to apply all filters
     const applyFilters = (data, status, search, dates) => {
@@ -129,6 +134,7 @@ const OvertimeList = ({
     
     // Handle status filter change
     const handleStatusFilterChange = (e) => {
+        if (processing || localProcessing) return;
         const status = e.target.value;
         setFilterStatus(status);
         applyFilters(localOvertimes, status, searchTerm, dateRange);
@@ -136,6 +142,7 @@ const OvertimeList = ({
     
     // Handle search input change
     const handleSearchChange = (e) => {
+        if (processing || localProcessing) return;
         const value = e.target.value;
         setSearchTerm(value);
         applyFilters(localOvertimes, filterStatus, value, dateRange);
@@ -143,6 +150,7 @@ const OvertimeList = ({
     
     // Handle date range changes
     const handleDateRangeChange = (field, value) => {
+        if (processing || localProcessing) return;
         const newDateRange = { ...dateRange, [field]: value };
         setDateRange(newDateRange);
         applyFilters(localOvertimes, filterStatus, searchTerm, newDateRange);
@@ -150,6 +158,7 @@ const OvertimeList = ({
     
     // Clear all filters
     const clearFilters = () => {
+        if (processing || localProcessing) return;
         setFilterStatus('');
         setSearchTerm('');
         setDateRange({ from: '', to: '' });
@@ -158,6 +167,8 @@ const OvertimeList = ({
     
     // Open detail modal
     const handleViewDetail = (overtime) => {
+        if (processing || localProcessing) return;
+        
         // Pause auto-refresh when modal is open
         if (timerRef.current) {
             clearInterval(timerRef.current);
@@ -173,49 +184,70 @@ const OvertimeList = ({
         setSelectedOvertime(null);
         
         // Resume auto-refresh when modal is closed
-        const refreshData = async () => {
-            try {
-                if (typeof window.refreshOvertimes === 'function') {
-                    const freshData = await window.refreshOvertimes();
-                    setLocalOvertimes(freshData);
-                    applyFilters(freshData, filterStatus, searchTerm, dateRange);
+        if (!processing && !localProcessing) {
+            const refreshData = async () => {
+                try {
+                    if (typeof window.refreshOvertimes === 'function') {
+                        const freshData = await window.refreshOvertimes();
+                        setLocalOvertimes(freshData);
+                        applyFilters(freshData, filterStatus, searchTerm, dateRange);
+                    }
+                } catch (error) {
+                    console.error('Error refreshing overtime data:', error);
                 }
-            } catch (error) {
-                console.error('Error refreshing overtime data:', error);
-            }
-        };
-        
-        timerRef.current = setInterval(refreshData, refreshInterval);
+            };
+            
+            timerRef.current = setInterval(refreshData, refreshInterval);
+        }
     };
     
     // Handle status update (from modal)
     const handleStatusUpdate = (id, data) => {
-        // Set processing state to true when starting the update
-        setProcessing(true);
+        setUpdatingId(id);
+        setLocalProcessing(true);
         
         // Check if onStatusUpdate is a function before calling it
         if (typeof onStatusUpdate === 'function') {
-            // Pass the entire data object to the parent component
             try {
-                onStatusUpdate(id, data);
+                const result = onStatusUpdate(id, data);
+                
+                // If it returns a promise, handle it
+                if (result && typeof result.then === 'function') {
+                    result
+                        .then(() => {
+                            setUpdatingId(null);
+                            setLocalProcessing(false);
+                        })
+                        .catch((error) => {
+                            console.error('Error updating status:', error);
+                            alert('Error: Unable to update status. Please try again.');
+                            setUpdatingId(null);
+                            setLocalProcessing(false);
+                        });
+                } else {
+                    // If not a promise, assume it completed
+                    setUpdatingId(null);
+                    setLocalProcessing(false);
+                }
             } catch (error) {
                 console.error('Error updating status:', error);
                 alert('Error: Unable to update status. Please try again.');
-            } finally {
-                // Set processing back to false when done
-                setProcessing(false);
+                setUpdatingId(null);
+                setLocalProcessing(false);
             }
         } else {
             console.error('onStatusUpdate prop is not a function');
             alert('Error: Unable to update status. Please refresh the page and try again.');
-            setProcessing(false);
+            setUpdatingId(null);
+            setLocalProcessing(false);
         }
         handleCloseModal();
     };
     
     const handleDelete = (id) => {
         if (confirm('Are you sure you want to delete this overtime request?')) {
-            setProcessing(true);
+            setDeletingId(id);
+            setLocalProcessing(true);
             
             router.post(route('overtimes.destroy.post', id), {}, {
                 preserveScroll: true,
@@ -226,15 +258,16 @@ const OvertimeList = ({
                     
                     // Apply filters to the updated list
                     applyFilters(updatedOvertimes, filterStatus, searchTerm, dateRange);
-                    // No need to set filteredOvertimes here as applyFilters does it
                     
                     toast.success('Overtime deleted successfully');
-                    setProcessing(false);
+                    setDeletingId(null);
+                    setLocalProcessing(false);
                 },
                 onError: (errors) => {
                     console.error('Error deleting overtime:', errors);
                     toast.error('Failed to delete overtime');
-                    setProcessing(false);
+                    setDeletingId(null);
+                    setLocalProcessing(false);
                 }
             });
         }
@@ -282,6 +315,8 @@ const OvertimeList = ({
 
     // Multiple selection handlers
     const toggleSelectAll = () => {
+        if (processing || localProcessing) return;
+        
         setSelectAll(!selectAll);
         if (!selectAll) {
             // Only select appropriate overtimes based on user role
@@ -313,6 +348,8 @@ const OvertimeList = ({
     };
 
     const toggleSelectItem = (id) => {
+        if (processing || localProcessing) return;
+        
         setSelectedIds(prevIds => {
             if (prevIds.includes(id)) {
                 return prevIds.filter(itemId => itemId !== id);
@@ -327,6 +364,7 @@ const OvertimeList = ({
             alert('Please select at least one overtime request');
             return;
         }
+        if (processing || localProcessing) return;
         setShowBulkActionModal(true);
     };
 
@@ -335,7 +373,7 @@ const OvertimeList = ({
     };
 
     const handleBulkStatusUpdate = (status, remarks) => {
-        setProcessing(true);
+        setLocalProcessing(true);
         
         // Create data for bulk update
         const data = {
@@ -357,7 +395,7 @@ const OvertimeList = ({
                     only: ['overtimes'],
                     preserveScroll: true,
                     onFinish: () => {
-                        setProcessing(false);
+                        setLocalProcessing(false);
                     }
                 });
             },
@@ -365,7 +403,7 @@ const OvertimeList = ({
                 console.error('Error during bulk update:', errors);
                 toast.error('Failed to update overtime requests: ' + 
                     (errors?.message || 'Unknown error'));
-                setProcessing(false);
+                setLocalProcessing(false);
             }
         });
         
@@ -374,6 +412,10 @@ const OvertimeList = ({
     
     // Export to Excel functionality - Server-side implementation
     const exportToExcel = () => {
+        if (processing || localProcessing || exporting) return;
+        
+        setExporting(true);
+        
         // Build query parameters from current filters
         const queryParams = new URLSearchParams();
         
@@ -396,8 +438,18 @@ const OvertimeList = ({
         // Generate the export URL with the current filters
         const exportUrl = `/overtimes/export?${queryParams.toString()}`;
         
-        // Open the URL in a new tab/window to download the file
-        window.open(exportUrl, '_blank');
+        // Create a temporary link and click it
+        const link = document.createElement('a');
+        link.href = exportUrl;
+        link.target = '_blank';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        // Reset export state after a delay
+        setTimeout(() => {
+            setExporting(false);
+        }, 2000);
     };
 
     const canSelectOvertime = (overtime) => {
@@ -422,8 +474,33 @@ const OvertimeList = ({
     // Determine the approval level for bulk actions based on user role
     const bulkApprovalLevel = userRoles.isDepartmentManager ? 'department' : 'hrd';
 
+    // Helper function for bulk action button content
+    const bulkActionButtonContent = () => {
+        if (localProcessing || processing) {
+            return (
+                <>
+                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                    Processing...
+                </>
+            );
+        }
+        return `Bulk Action (${selectedIds.length})`;
+    };
+
     return (
-        <div className="bg-white shadow-md rounded-lg overflow-hidden flex flex-col h-[62vh]">
+        <div className="bg-white shadow-md rounded-lg overflow-hidden flex flex-col h-[62vh] relative">
+            {/* Global loading overlay for the entire list */}
+            {(processing || localProcessing) && (
+                <div className="absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center z-40">
+                    <div className="text-center">
+                        <Loader2 className="h-8 w-8 animate-spin mx-auto mb-2 text-indigo-600" />
+                        <p className="text-sm text-gray-600">
+                            {processing ? 'Processing overtime requests...' : 'Updating data...'}
+                        </p>
+                    </div>
+                </div>
+            )}
+            
             <div className="p-4 border-b">
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center space-y-4 md:space-y-0">
                     <h3 className="text-lg font-semibold">Overtime Requests</h3>
@@ -432,18 +509,28 @@ const OvertimeList = ({
                         {/* Export Button */}
                         <button
                             onClick={exportToExcel}
-                            className="px-3 py-1 bg-green-600 text-white rounded-md text-sm hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 flex items-center"
+                            className="px-3 py-1 bg-green-600 text-white rounded-md text-sm hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 flex items-center disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
                             title="Export to Excel"
+                            disabled={exporting || processing || localProcessing}
                         >
-                            <Download className="h-4 w-4 mr-1" />
-                            Export
+                            {exporting ? (
+                                <>
+                                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                                    Exporting...
+                                </>
+                            ) : (
+                                <>
+                                    <Download className="h-4 w-4 mr-1" />
+                                    Export
+                                </>
+                            )}
                         </button>
 
                         {/* Force Approve Button - Only visible for SuperAdmin */}
                         {userRoles.isSuperAdmin && (
                             <ForceApproveButton 
                                 selectedIds={selectedIds} 
-                                disabled={processing}
+                                disabled={processing || localProcessing}
                             />
                         )}
                         
@@ -451,10 +538,10 @@ const OvertimeList = ({
                         {selectedIds.length > 0 && (
                             <button
                                 onClick={handleOpenBulkActionModal}
-                                className="px-3 py-1 bg-indigo-600 text-white rounded-md text-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                disabled={processing}
+                                className="px-3 py-1 bg-indigo-600 text-white rounded-md text-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 flex items-center disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
+                                disabled={processing || localProcessing}
                             >
-                                Bulk Action ({selectedIds.length})
+                                {bulkActionButtonContent()}
                             </button>
                         )}
                         
@@ -465,6 +552,7 @@ const OvertimeList = ({
                                 className="rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                 value={filterStatus}
                                 onChange={handleStatusFilterChange}
+                                disabled={processing || localProcessing}
                             >
                                 <option value="">All Statuses</option>
                                 <option value="pending">Pending</option>
@@ -488,6 +576,7 @@ const OvertimeList = ({
                             className="pl-10 w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                             value={searchTerm}
                             onChange={handleSearchChange}
+                            disabled={processing || localProcessing}
                         />
                     </div>
                     
@@ -502,6 +591,7 @@ const OvertimeList = ({
                                 className="rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                 value={dateRange.from}
                                 onChange={(e) => handleDateRangeChange('from', e.target.value)}
+                                disabled={processing || localProcessing}
                             />
                         </div>
                         
@@ -515,6 +605,7 @@ const OvertimeList = ({
                                 className="rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                 value={dateRange.to}
                                 onChange={(e) => handleDateRangeChange('to', e.target.value)}
+                                disabled={processing || localProcessing}
                             />
                         </div>
                         
@@ -522,8 +613,9 @@ const OvertimeList = ({
                         {(filterStatus || searchTerm || dateRange.from || dateRange.to) && (
                             <button
                                 onClick={clearFilters}
-                                className="px-3 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md text-sm flex items-center"
+                                className="px-3 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md text-sm flex items-center disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
                                 title="Clear all filters"
+                                disabled={processing || localProcessing}
                             >
                                 <X className="h-4 w-4 mr-1" />
                                 Clear
@@ -544,6 +636,7 @@ const OvertimeList = ({
                                         className="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                         checked={selectAll && selectedIds.length === selectableItemsCount}
                                         onChange={toggleSelectAll}
+                                        disabled={processing || localProcessing}
                                     />
                                 </th>
                             )}
@@ -574,12 +667,14 @@ const OvertimeList = ({
                         {filteredOvertimes.length === 0 ? (
                             <tr>
                                 <td colSpan={selectableItemsCount > 0 ? "8" : "7"} className="px-6 py-4 text-center text-sm text-gray-500">
-                                    No overtime records found
+                                    {processing || localProcessing ? 'Loading overtime records...' : 'No overtime records found'}
                                 </td>
                             </tr>
                         ) : (
                             filteredOvertimes.map(overtime => (
-                                <tr key={overtime.id} className="hover:bg-gray-50">
+                                <tr key={overtime.id} className={`hover:bg-gray-50 transition-colors duration-200 ${
+                                    (deletingId === overtime.id || updatingId === overtime.id) ? 'opacity-50' : ''
+                                }`}>
                                     {selectableItemsCount > 0 && (
                                         <td className="px-4 py-4">
                                             {canSelectOvertime(overtime) && (
@@ -588,6 +683,7 @@ const OvertimeList = ({
                                                     className="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                                     checked={selectedIds.includes(overtime.id)}
                                                     onChange={() => toggleSelectItem(overtime.id)}
+                                                    disabled={processing || localProcessing || deletingId === overtime.id || updatingId === overtime.id}
                                                 />
                                             )}
                                         </td>
@@ -627,33 +723,67 @@ const OvertimeList = ({
                                         {overtime.creator ? overtime.creator.name : 'N/A'}
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                        <button
-                                            onClick={() => handleViewDetail(overtime)}
-                                            className="text-indigo-600 hover:text-indigo-900 mr-3"
-                                        >
-                                            View
-                                        </button>
-                                        
-                                        {(overtime.status === 'pending' && 
-                                          (userRoles.isSuperAdmin || 
-                                           overtime.created_by === userRoles.userId || 
-                                           (userRoles.isDepartmentManager && 
-                                            (overtime.dept_manager_id === userRoles.userId || 
-                                             userRoles.managedDepartments?.includes(overtime.employee?.Department))))) && (
+                                        <div className="flex items-center justify-end space-x-2">
                                             <button
-                                                onClick={() => handleDelete(overtime.id)}
-                                                className="text-red-600 hover:text-red-900"
-                                                disabled={processing}
+                                                onClick={() => handleViewDetail(overtime)}
+                                                className="text-indigo-600 hover:text-indigo-900 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
+                                                disabled={processing || localProcessing || updatingId === overtime.id}
                                             >
-                                                Delete
+                                                View
                                             </button>
-                                        )}
+                                            
+                                            {(overtime.status === 'pending' && 
+                                              (userRoles.isSuperAdmin || 
+                                               overtime.created_by === userRoles.userId || 
+                                               (userRoles.isDepartmentManager && 
+                                                (overtime.dept_manager_id === userRoles.userId || 
+                                                 userRoles.managedDepartments?.includes(overtime.employee?.Department))))) && (
+                                                <button
+                                                    onClick={() => handleDelete(overtime.id)}
+                                                    className="text-red-600 hover:text-red-900 disabled:opacity-50 disabled:cursor-not-allowed flex items-center transition-colors duration-200"
+                                                    disabled={processing || localProcessing || deletingId === overtime.id}
+                                                >
+                                                    {deletingId === overtime.id ? (
+                                                        <>
+                                                            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                                            Deleting...
+                                                        </>
+                                                    ) : (
+                                                        'Delete'
+                                                    )}
+                                                </button>
+                                            )}
+                                        </div>
                                     </td>
                                 </tr>
                             ))
                         )}
                     </tbody>
                 </table>
+            </div>
+            
+            {/* Footer with summary information */}
+            <div className="px-4 py-3 bg-gray-50 border-t text-sm text-gray-600">
+                <div className="flex justify-between items-center">
+                    <div>
+                        Showing {filteredOvertimes.length} of {localOvertimes.length} overtime requests
+                        {selectedIds.length > 0 && (
+                            <span className="ml-4 text-indigo-600 font-medium">
+                                {selectedIds.length} selected
+                            </span>
+                        )}
+                    </div>
+                    
+                    {/* Processing indicator */}
+                    {(processing || localProcessing) && (
+                        <div className="flex items-center text-indigo-600">
+                            <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                            <span className="text-xs">
+                                {processing ? 'Processing...' : 'Updating...'}
+                            </span>
+                        </div>
+                    )}
+                </div>
             </div>
             
             {/* Detail Modal */}
@@ -663,7 +793,8 @@ const OvertimeList = ({
                     onClose={handleCloseModal}
                     onStatusUpdate={handleStatusUpdate}
                     userRoles={userRoles}
-                    viewOnly={true} 
+                    viewOnly={processing || localProcessing} // Pass loading state as viewOnly
+                    processing={updatingId === selectedOvertime.id}
                 />
             )}
 

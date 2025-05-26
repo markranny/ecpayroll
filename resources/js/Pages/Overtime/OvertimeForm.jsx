@@ -1,7 +1,7 @@
 // resources/js/Pages/Overtime/OvertimeForm.jsx
 import React, { useState, useEffect } from 'react';
 import { format } from 'date-fns';
-import { HelpCircle } from 'lucide-react';
+import { HelpCircle, Loader2 } from 'lucide-react';
 import OvertimeRateHelpModal from './OvertimeRateHelpModal';
 
 const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => {
@@ -16,6 +16,10 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
         reason: '',
         rate_multiplier: rateMultipliers.length > 0 ? rateMultipliers[0].value : 1.25
     });
+    
+    // Loading and processing states
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [loadingMessage, setLoadingMessage] = useState('');
     
     // Filtered employees state
     const [displayedEmployees, setDisplayedEmployees] = useState(employees || []);
@@ -168,9 +172,37 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
         });
     };
     
+    // Handle department selection for bulk operations
+    const handleSelectByDepartment = (department) => {
+        const departmentEmployees = employees.filter(emp => emp.Department === department);
+        const departmentIds = departmentEmployees.map(emp => emp.id);
+        
+        setFormData(prevData => {
+            // Check if all employees from this department are already selected
+            const allDeptSelected = departmentIds.every(id => prevData.employee_ids.includes(id));
+            
+            if (allDeptSelected) {
+                // If all are selected, deselect them
+                return {
+                    ...prevData,
+                    employee_ids: prevData.employee_ids.filter(id => !departmentIds.includes(id))
+                };
+            } else {
+                // Select all employees from this department
+                const remainingIds = prevData.employee_ids.filter(id => !departmentIds.includes(id));
+                return {
+                    ...prevData,
+                    employee_ids: [...remainingIds, ...departmentIds]
+                };
+            }
+        });
+    };
+    
     // Handle form submission
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
         e.preventDefault();
+        
+        if (isSubmitting) return; // Prevent double submission
         
         // Validate form
         if (formData.employee_ids.length === 0) {
@@ -193,22 +225,41 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
             return;
         }
         
-        // Call the onSubmit prop with the form data
-        onSubmit(formData);
+        // Set loading state
+        setIsSubmitting(true);
+        setLoadingMessage(`Processing overtime for ${formData.employee_ids.length} employee${formData.employee_ids.length > 1 ? 's' : ''}...`);
         
-        // Reset form after submission 
-        setFormData({
-            employee_ids: [],
-            date: today,
-            start_time: '17:00',
-            end_time: '20:00',
-            reason: '',
-            rate_multiplier: rateMultipliers.length > 0 ? rateMultipliers[0].value : 1.25
-        });
-        
-        // Reset filters
-        setSearchTerm('');
-        setSelectedDepartment('');
+        try {
+            // Call the onSubmit prop with the form data
+            await onSubmit(formData);
+            
+            // Reset form after successful submission 
+            setFormData({
+                employee_ids: [],
+                date: today,
+                start_time: '17:00',
+                end_time: '20:00',
+                reason: '',
+                rate_multiplier: rateMultipliers.length > 0 ? rateMultipliers[0].value : 1.25
+            });
+            
+            // Reset filters
+            setSearchTerm('');
+            setSelectedDepartment('');
+            
+            setLoadingMessage('Overtime requests submitted successfully!');
+            
+            // Clear success message after a delay
+            setTimeout(() => {
+                setLoadingMessage('');
+            }, 2000);
+            
+        } catch (error) {
+            console.error('Error submitting overtime:', error);
+            setLoadingMessage('');
+        } finally {
+            setIsSubmitting(false);
+        }
     };
     
     // Calculate if all displayed employees are selected
@@ -218,6 +269,18 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
     // Get selected employees details for display
     const selectedEmployees = employees.filter(emp => formData.employee_ids.includes(emp.id));
     
+    // Get department statistics for quick selection
+    const departmentStats = departments.map(dept => {
+        const deptEmployees = employees.filter(emp => emp.Department === dept);
+        const selectedFromDept = deptEmployees.filter(emp => formData.employee_ids.includes(emp.id));
+        return {
+            name: dept,
+            total: deptEmployees.length,
+            selected: selectedFromDept.length,
+            allSelected: deptEmployees.length > 0 && selectedFromDept.length === deptEmployees.length
+        };
+    });
+
     return (
         <div className="bg-white shadow-md rounded-lg overflow-hidden">
             <div className="p-4 border-b">
@@ -225,11 +288,50 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
                 <p className="text-sm text-gray-500">Create overtime request for one or multiple employees</p>
             </div>
             
-            <form onSubmit={handleSubmit}>
+            {/* Loading Overlay */}
+            {isSubmitting && (
+                <div className="absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center z-50 rounded-lg">
+                    <div className="text-center">
+                        <Loader2 className="h-8 w-8 animate-spin mx-auto mb-2 text-indigo-600" />
+                        <p className="text-sm text-gray-600">{loadingMessage}</p>
+                    </div>
+                </div>
+            )}
+            
+            <form onSubmit={handleSubmit} className="relative">
                 <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
                     {/* Employee Selection Section */}
                     <div className="md:col-span-2 bg-gray-50 p-4 rounded-lg">
                         <h4 className="font-medium mb-3">Select Employees</h4>
+                        
+                        {/* Quick Department Selection */}
+                        <div className="mb-4">
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                                Quick Department Selection
+                            </label>
+                            <div className="flex flex-wrap gap-2">
+                                {departmentStats.map(dept => (
+                                    <button
+                                        key={dept.name}
+                                        type="button"
+                                        onClick={() => handleSelectByDepartment(dept.name)}
+                                        className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                                            dept.allSelected 
+                                                ? 'bg-indigo-600 text-white' 
+                                                : dept.selected > 0 
+                                                    ? 'bg-indigo-100 text-indigo-700 border-2 border-indigo-300' 
+                                                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                                        }`}
+                                        disabled={isSubmitting}
+                                    >
+                                        {dept.name} ({dept.selected}/{dept.total})
+                                    </button>
+                                ))}
+                            </div>
+                            <p className="text-xs text-gray-500 mt-1">
+                                Click department buttons to select/deselect all employees from that department
+                            </p>
+                        </div>
                         
                         <div className="flex flex-col md:flex-row space-y-2 md:space-y-0 md:space-x-2 mb-4">
                             <div className="flex-1">
@@ -239,6 +341,7 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
                                     className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                     value={searchTerm}
                                     onChange={(e) => setSearchTerm(e.target.value)}
+                                    disabled={isSubmitting}
                                 />
                             </div>
                             
@@ -247,6 +350,7 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
                                     className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                     value={selectedDepartment}
                                     onChange={(e) => setSelectedDepartment(e.target.value)}
+                                    disabled={isSubmitting}
                                 >
                                     <option value="">All Departments</option>
                                     {departments.map((department, index) => (
@@ -262,8 +366,9 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
                                         allDisplayedSelected 
                                             ? 'bg-indigo-700 hover:bg-indigo-800' 
                                             : 'bg-indigo-500 hover:bg-indigo-600'
-                                    } text-white focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500`}
+                                    } text-white focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50`}
                                     onClick={handleSelectAll}
+                                    disabled={isSubmitting}
                                 >
                                     {allDisplayedSelected ? 'Deselect All' : 'Select All'}
                                 </button>
@@ -305,8 +410,8 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
                                                 key={employee.id} 
                                                 className={`hover:bg-gray-50 cursor-pointer ${
                                                     formData.employee_ids.includes(employee.id) ? 'bg-indigo-50' : ''
-                                                }`}
-                                                onClick={() => handleEmployeeSelection(employee.id)}
+                                                } ${isSubmitting ? 'opacity-50' : ''}`}
+                                                onClick={() => !isSubmitting && handleEmployeeSelection(employee.id)}
                                             >
                                                 <td className="px-4 py-2 whitespace-nowrap">
                                                     <input
@@ -315,6 +420,7 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
                                                         checked={formData.employee_ids.includes(employee.id)}
                                                         onChange={(e) => handleCheckboxChange(e, employee.id)}
                                                         onClick={(e) => e.stopPropagation()}
+                                                        disabled={isSubmitting}
                                                     />
                                                 </td>
                                                 <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">
@@ -370,6 +476,7 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
                                     className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                     value={formData.date}
                                     onChange={handleChange}
+                                    disabled={isSubmitting}
                                     required
                                 />
                             </div>
@@ -386,6 +493,7 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
                                         className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                         value={formData.start_time}
                                         onChange={handleChange}
+                                        disabled={isSubmitting}
                                         required
                                     />
                                 </div>
@@ -401,6 +509,7 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
                                         className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                         value={formData.end_time}
                                         onChange={handleChange}
+                                        disabled={isSubmitting}
                                         required
                                     />
                                 </div>
@@ -414,7 +523,8 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
                                     <button
                                         type="button"
                                         onClick={() => setShowRateHelpModal(true)}
-                                        className="text-indigo-600 hover:text-indigo-800 flex items-center text-xs focus:outline-none"
+                                        className="text-indigo-600 hover:text-indigo-800 flex items-center text-xs focus:outline-none disabled:opacity-50"
+                                        disabled={isSubmitting}
                                     >
                                         <HelpCircle className="h-4 w-4 mr-1" />
                                         Rate Guide
@@ -426,6 +536,7 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
                                     className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                     value={formData.rate_multiplier}
                                     onChange={handleChange}
+                                    disabled={isSubmitting}
                                     required
                                 >
                                     <optgroup label="Regular Work Hours">
@@ -476,6 +587,7 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
                                 placeholder="Provide a detailed reason for the overtime request"
                                 value={formData.reason}
                                 onChange={handleChange}
+                                disabled={isSubmitting}
                                 required
                             ></textarea>
                             <p className="mt-1 text-xs text-gray-500">
@@ -488,16 +600,24 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
                 <div className="px-4 py-3 bg-gray-50 text-right sm:px-6 border-t">
                     <button
                         type="submit"
-                        className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                        className="inline-flex justify-center items-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                        disabled={isSubmitting}
                     >
-                        Submit Overtime Request
+                        {isSubmitting ? (
+                            <>
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                Processing...
+                            </>
+                        ) : (
+                            'Submit Overtime Request'
+                        )}
                     </button>
                 </div>
             </form>
             
             {/* Rate Help Modal */}
             <OvertimeRateHelpModal 
-                isOpen={showRateHelpModal}
+                isOpen={showRateHelpModal && !isSubmitting}
                 onClose={() => setShowRateHelpModal(false)}
             />
         </div>

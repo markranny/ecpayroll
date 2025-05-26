@@ -1,6 +1,9 @@
+// Update for MultiBulkActionModal.jsx - Add loading state improvements
+
 import React, { useState } from 'react';
 import { router } from '@inertiajs/react';
 import { toast } from 'react-toastify';
+import { Loader2 } from 'lucide-react';
 
 const MultiBulkActionModal = ({ selectedCount, onClose, onSubmit, approvalLevel, userRoles = {} }) => {
     const [status, setStatus] = useState(approvalLevel === 'department' ? 'manager_approved' : 'approved');
@@ -60,7 +63,6 @@ const MultiBulkActionModal = ({ selectedCount, onClose, onSubmit, approvalLevel,
 
     return (
         <div className="fixed inset-0 z-50 overflow-y-auto">
-            {/* Rest of your component remains the same */}
             <div className="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
                 <div className="fixed inset-0 transition-opacity" aria-hidden="true">
                     <div className="absolute inset-0 bg-gray-500 opacity-75"></div>
@@ -68,7 +70,18 @@ const MultiBulkActionModal = ({ selectedCount, onClose, onSubmit, approvalLevel,
                 
                 <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
                 
-                <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+                <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full relative">
+                    
+                    {/* Loading Overlay */}
+                    {processing && (
+                        <div className="absolute inset-0 bg-white bg-opacity-90 flex items-center justify-center z-10">
+                            <div className="text-center">
+                                <Loader2 className="h-8 w-8 animate-spin mx-auto mb-2 text-indigo-600" />
+                                <p className="text-sm text-gray-600">Processing bulk action...</p>
+                            </div>
+                        </div>
+                    )}
+                    
                     <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
                         <div className="sm:flex sm:items-start">
                             <div className="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-indigo-100 sm:mx-0 sm:h-10 sm:w-10">
@@ -96,6 +109,7 @@ const MultiBulkActionModal = ({ selectedCount, onClose, onSubmit, approvalLevel,
                                                     value={approvalLevel === 'department' ? 'manager_approved' : 'approved'}
                                                     checked={status === (approvalLevel === 'department' ? 'manager_approved' : 'approved')}
                                                     onChange={() => setStatus(approvalLevel === 'department' ? 'manager_approved' : 'approved')}
+                                                    disabled={processing}
                                                 />
                                                 <span className="ml-2 text-gray-700">
                                                     {approvalLevel === 'department' ? 'Approve (Dept. Level)' : 'Final Approve'}
@@ -109,6 +123,7 @@ const MultiBulkActionModal = ({ selectedCount, onClose, onSubmit, approvalLevel,
                                                     value="rejected"
                                                     checked={status === 'rejected'}
                                                     onChange={() => setStatus('rejected')}
+                                                    disabled={processing}
                                                 />
                                                 <span className="ml-2 text-gray-700">Reject</span>
                                             </label>
@@ -123,6 +138,7 @@ const MultiBulkActionModal = ({ selectedCount, onClose, onSubmit, approvalLevel,
                                                         value="force_approved"
                                                         checked={status === "force_approved"}
                                                         onChange={() => setStatus("force_approved")}
+                                                        disabled={processing}
                                                     />
                                                     <span className="ml-2 text-gray-700">Force Approve (Admin Override)</span>
                                                 </label>
@@ -130,7 +146,6 @@ const MultiBulkActionModal = ({ selectedCount, onClose, onSubmit, approvalLevel,
                                         </div>
                                     </div>
                                     
-                                    {/* Rest of your component remains the same */}
                                     {/* Warning message for force approval */}
                                     {status === 'force_approved' && (
                                         <div className="mb-4 bg-yellow-50 p-3 rounded-md">
@@ -159,6 +174,7 @@ const MultiBulkActionModal = ({ selectedCount, onClose, onSubmit, approvalLevel,
                                             value={remarks}
                                             onChange={(e) => setRemarks(e.target.value)}
                                             placeholder={`Enter remarks for overtime requests`}
+                                            disabled={processing}
                                         ></textarea>
                                         {status === 'rejected' && (
                                             <p className="mt-1 text-sm text-gray-500">
@@ -178,17 +194,22 @@ const MultiBulkActionModal = ({ selectedCount, onClose, onSubmit, approvalLevel,
                     <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
                         <button
                             type="button"
-                            className={`w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 ${
+                            className={`w-full inline-flex justify-center items-center rounded-md border border-transparent shadow-sm px-4 py-2 ${
                                 status === 'rejected' 
                                     ? 'bg-red-600 hover:bg-red-700 focus:ring-red-500' 
                                     : status === 'force_approved'
                                     ? 'bg-purple-600 hover:bg-purple-700 focus:ring-purple-500'
                                     : 'bg-green-600 hover:bg-green-700 focus:ring-green-500'
-                            } text-base font-medium text-white focus:outline-none focus:ring-2 focus:ring-offset-2 sm:ml-3 sm:w-auto sm:text-sm`}
+                            } text-base font-medium text-white focus:outline-none focus:ring-2 focus:ring-offset-2 sm:ml-3 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed`}
                             onClick={handleSubmit}
                             disabled={processing}
                         >
-                            {processing ? 'Processing...' : (
+                            {processing ? (
+                                <>
+                                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                    Processing...
+                                </>
+                            ) : (
                                 status === 'rejected' ? 'Reject All' : 
                                 status === 'force_approved' ? 'Force Approve All' :
                                 approvalLevel === 'department' ? 'Approve All (Dept. Level)' : 'Final Approve All'
@@ -196,7 +217,7 @@ const MultiBulkActionModal = ({ selectedCount, onClose, onSubmit, approvalLevel,
                         </button>
                         <button
                             type="button"
-                            className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+                            className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm disabled:opacity-50"
                             onClick={onClose}
                             disabled={processing}
                         >
