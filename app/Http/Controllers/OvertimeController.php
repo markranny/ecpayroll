@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use App\Models\Overtime;
 use App\Models\Employee;
+use App\Models\Department; // Add Department model
 use App\Models\DepartmentManager;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Carbon;
@@ -23,12 +24,10 @@ class OvertimeController extends Controller
         $user = Auth::user();
         $userRoles = $this->getUserRoles($user);
         
-        // Get all departments for filtering
-        $departments = Employee::select('Department')
-            ->distinct()
-            ->whereNotNull('Department')
-            ->orderBy('Department')
-            ->pluck('Department')
+        // Get all active departments using the Department model
+        $departments = Department::where('is_active', true)
+            ->orderBy('name')
+            ->pluck('name')
             ->toArray();
             
         // Get available rate multipliers
@@ -86,8 +85,11 @@ class OvertimeController extends Controller
         // Sort by latest first
         $overtimesQuery->orderBy('created_at', 'desc');
         
-        // Get active employees for the form
+        // Get active employees for the form - only from active departments
         $employees = Employee::where('JobStatus', 'Active')
+            ->whereHas('department', function($query) {
+                $query->where('is_active', true);
+            })
             ->orderBy('Lname')
             ->get();
             
@@ -364,6 +366,7 @@ public function bulkUpdateStatus(Request $request)
             'date' => 'required|date',
             'start_time' => 'required',
             'end_time' => 'required',
+            'overtime_hours' => 'required|numeric|min:0.25|max:24',
             'reason' => 'required|string|max:1000',
             'rate_multiplier' => 'required|numeric',
         ]);
@@ -383,10 +386,16 @@ public function bulkUpdateStatus(Request $request)
         
         try {
             foreach ($validated['employee_ids'] as $employeeId) {
-                $employee = Employee::find($employeeId);
+                $employee = Employee::with('department')->find($employeeId);
                 
                 if (!$employee) {
                     $errorMessages[] = "Employee ID $employeeId not found";
+                    continue;
+                }
+                
+                // Check if employee belongs to an active department
+                if (!$employee->department || !$employee->department->is_active) {
+                    $errorMessages[] = "Employee {$employee->Fname} {$employee->Lname} belongs to an inactive department";
                     continue;
                 }
                 
@@ -401,20 +410,21 @@ public function bulkUpdateStatus(Request $request)
                     continue;
                 }
                 
-                // Find department manager for this employee
-                $deptManager = DepartmentManager::where('department', $employee->Department)
+                // Find department manager for this employee using the department name
+                $deptManager = DepartmentManager::where('department', $employee->department->name)
                     ->first();
                 
-                // Calculate total hours with consideration for midnight crossing
+                // Parse start and end times for storage
                 $startTime = Carbon::parse($validated['date'] . ' ' . $validated['start_time']);
                 $endTime = Carbon::parse($validated['date'] . ' ' . $validated['end_time']);
                 
-                // Handle case where end time is on the next day
+                // Handle case where end time is on the next day (overnight shift)
                 if ($endTime->lt($startTime)) {
                     $endTime->addDay();
                 }
                 
-                $totalHours = $endTime->diffInMinutes($startTime) / 60;
+                // Use the manually entered overtime hours
+                $totalHours = floatval($validated['overtime_hours']);
                 
                 // Calculate rate multiplier based on day type and night differential
                 $rateMultiplier = $this->calculateRateMultiplier(
@@ -434,12 +444,10 @@ public function bulkUpdateStatus(Request $request)
                 $overtime->reason = $validated['reason'];
                 
                 // Set initial status based on conditions
-                // 1. If user is a department manager filing their own overtime and it's at least 4 hours
                 if ($isDepartmentManager && $totalHours >= 4.0 && 
-                    // Check if the employee is the department manager themselves
                     ($employeeId == $user->employee_id || 
-                     ($employee->Department && DepartmentManager::where('manager_id', $user->id)
-                                                        ->where('department', $employee->Department)
+                     ($employee->department && DepartmentManager::where('manager_id', $user->id)
+                                                        ->where('department', $employee->department->name)
                                                         ->exists()))) {
                     
                     // Auto-approve at department manager level

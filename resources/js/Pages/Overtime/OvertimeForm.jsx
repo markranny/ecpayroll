@@ -13,6 +13,7 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
         date: today,
         start_time: '17:00',
         end_time: '20:00',
+        overtime_hours: '3.00', // Add manual overtime hours field
         reason: '',
         rate_multiplier: rateMultipliers.length > 0 ? rateMultipliers[0].value : 1.25
     });
@@ -68,10 +69,12 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
                 }
             }
             
-            // Check department match
+            // Check department match - now using proper department relationship
             let matchesDepartment = true;
             if (selectedDepartment) {
-                matchesDepartment = employee.Department === selectedDepartment;
+                // Check if employee has department relationship
+                const employeeDepartment = employee.department?.name || employee.Department;
+                matchesDepartment = employeeDepartment === selectedDepartment;
             }
             
             // Categorize based on matches and selection status
@@ -174,7 +177,11 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
     
     // Handle department selection for bulk operations
     const handleSelectByDepartment = (department) => {
-        const departmentEmployees = employees.filter(emp => emp.Department === department);
+        // Filter employees by department using proper relationship
+        const departmentEmployees = employees.filter(emp => {
+            const employeeDepartment = emp.department?.name || emp.Department;
+            return employeeDepartment === department;
+        });
         const departmentIds = departmentEmployees.map(emp => emp.id);
         
         setFormData(prevData => {
@@ -215,13 +222,26 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
             return;
         }
         
-        if (formData.start_time >= formData.end_time) {
-            alert('End time must be after start time');
-            return;
-        }
+        // Removed the time validation that was preventing overnight shifts
+        // if (formData.start_time >= formData.end_time) {
+        //     alert('End time must be after start time');
+        //     return;
+        // }
         
         if (!formData.reason.trim()) {
             alert('Please provide a reason for the overtime');
+            return;
+        }
+        
+        // Validate overtime hours
+        const overtimeHours = parseFloat(formData.overtime_hours);
+        if (isNaN(overtimeHours) || overtimeHours <= 0) {
+            alert('Please enter a valid number of overtime hours');
+            return;
+        }
+        
+        if (overtimeHours > 24) {
+            alert('Overtime hours cannot exceed 24 hours');
             return;
         }
         
@@ -239,6 +259,7 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
                 date: today,
                 start_time: '17:00',
                 end_time: '20:00',
+                overtime_hours: '3.00',
                 reason: '',
                 rate_multiplier: rateMultipliers.length > 0 ? rateMultipliers[0].value : 1.25
             });
@@ -271,7 +292,11 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
     
     // Get department statistics for quick selection
     const departmentStats = departments.map(dept => {
-        const deptEmployees = employees.filter(emp => emp.Department === dept);
+        // Filter employees by department using proper relationship
+        const deptEmployees = employees.filter(emp => {
+            const employeeDepartment = emp.department?.name || emp.Department;
+            return employeeDepartment === dept;
+        });
         const selectedFromDept = deptEmployees.filter(emp => formData.employee_ids.includes(emp.id));
         return {
             name: dept,
@@ -303,37 +328,6 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
                     {/* Employee Selection Section */}
                     <div className="md:col-span-2 bg-gray-50 p-4 rounded-lg">
                         <h4 className="font-medium mb-3">Select Employees</h4>
-                        
-                        {/* Quick Department Selection - COMMENTED OUT */}
-                        {/*
-                        <div className="mb-4">
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                                Quick Department Selection
-                            </label>
-                            <div className="flex flex-wrap gap-2">
-                                {departmentStats.map(dept => (
-                                    <button
-                                        key={dept.name}
-                                        type="button"
-                                        onClick={() => handleSelectByDepartment(dept.name)}
-                                        className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
-                                            dept.allSelected 
-                                                ? 'bg-indigo-600 text-white' 
-                                                : dept.selected > 0 
-                                                    ? 'bg-indigo-100 text-indigo-700 border-2 border-indigo-300' 
-                                                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                                        }`}
-                                        disabled={isSubmitting}
-                                    >
-                                        {dept.name} ({dept.selected}/{dept.total})
-                                    </button>
-                                ))}
-                            </div>
-                            <p className="text-xs text-gray-500 mt-1">
-                                Click department buttons to select/deselect all employees from that department
-                            </p>
-                        </div>
-                        */}
                         
                         <div className="flex flex-col md:flex-row space-y-2 md:space-y-0 md:space-x-2 mb-4">
                             <div className="flex-1">
@@ -434,7 +428,7 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
                                                     </div>
                                                 </td>
                                                 <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">
-                                                    {employee.Department}
+                                                    {employee.department?.name || employee.Department || 'No Department'}
                                                 </td>
                                                 <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">
                                                     {employee.Jobtitle}
@@ -515,6 +509,30 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
                                         required
                                     />
                                 </div>
+                            </div>
+                            
+                            {/* New Manual Overtime Hours Field */}
+                            <div>
+                                <label htmlFor="overtime_hours" className="block text-sm font-medium text-gray-700 mb-1">
+                                    Overtime Hours <span className="text-red-600">*</span>
+                                </label>
+                                <input
+                                    type="number"
+                                    id="overtime_hours"
+                                    name="overtime_hours"
+                                    step="0.25"
+                                    min="0.25"
+                                    max="24"
+                                    className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                                    value={formData.overtime_hours}
+                                    onChange={handleChange}
+                                    disabled={isSubmitting}
+                                    required
+                                    placeholder="Enter overtime hours (e.g., 3.5)"
+                                />
+                                <p className="mt-1 text-xs text-gray-500">
+                                    Enter the actual overtime hours worked (0.25 to 24 hours, in 15-minute increments).
+                                </p>
                             </div>
                             
                             <div>

@@ -143,4 +143,21 @@ class Employee extends Model
         $bank = $this->offsetBank;
         return $bank ? $bank->remaining_hours : 0;
     }
+
+    public function department()
+    {
+        // Option 1: If you have a department_id foreign key
+        // return $this->belongsTo(Department::class, 'department_id');
+        
+        // Option 2: If you're matching by department name (current setup)
+        return $this->belongsTo(Department::class, 'Department', 'name');
+    }
+
+    /**
+     * Get the overtime requests for the employee.
+     */
+    public function overtimes()
+    {
+        return $this->hasMany(Overtime::class);
+    }
 }
