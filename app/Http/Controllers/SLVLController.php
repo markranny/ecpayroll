@@ -4,11 +4,15 @@ namespace App\Http\Controllers;
 
 use App\Models\Employee;
 use App\Models\SLVL;
+use App\Models\SLVLBank;
+use App\Models\Department;
+use App\Models\DepartmentManager;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 use Inertia\Inertia;
 
@@ -21,22 +25,155 @@ use PhpOffice\PhpSpreadsheet\Style\Alignment;
 class SLVLController extends Controller
 {
     /**
-     * Display the leave management page.
+     * Display the SLVL management page.
      */
     public function index()
     {
-        $leaves = SLVL::with('employee')->latest()->get();
-        $employees = Employee::select(['id', 'idno', 'Lname', 'Fname', 'MName', 'Department', 'Jobtitle'])->get();
-        $departments = Employee::distinct()->pluck('Department')->filter()->values();
+        $user = Auth::user();
+        $userRoles = $this->getUserRoles($user);
         
+        // Get leaves based on user role
+        $leavesQuery = SLVL::with(['employee', 'creator', 'departmentManager', 'departmentApprover', 'hrdApprover']);
+        
+        // Filter based on user roles
+        if ($userRoles['isEmployee'] && !$userRoles['isDepartmentManager'] && !$userRoles['isHrdManager'] && !$userRoles['isSuperAdmin']) {
+            // Regular employees can only see their own leave requests
+            $employeeId = $user->employee ? $user->employee->id : null;
+            if ($employeeId) {
+                $leavesQuery->where('employee_id', $employeeId);
+            } else {
+                $leavesQuery->where('created_by', $user->id);
+            }
+        } elseif ($userRoles['isDepartmentManager'] && !$userRoles['isSuperAdmin']) {
+            // Department managers can see leaves for their departments
+            $managedDepartments = DepartmentManager::where('manager_id', $user->id)
+                ->pluck('department')
+                ->toArray();
+                
+            $leavesQuery->where(function($query) use ($user, $managedDepartments) {
+                $query->where('created_by', $user->id)
+                    ->orWhere('dept_manager_id', $user->id)
+                    ->orWhereHas('employee', function($q) use ($managedDepartments) {
+                        $q->whereIn('Department', $managedDepartments);
+                    });
+            });
+        } elseif ($userRoles['isHrdManager'] && !$userRoles['isSuperAdmin']) {
+            // HRD managers can see all leave requests
+            // No additional filtering needed
+        }
+        
+        $leaves = $leavesQuery->latest()->get();
+        
+        // Get active employees for the form
+        $employees = Employee::where('JobStatus', 'Active')
+            ->whereHas('department', function($query) {
+                $query->where('is_active', true);
+            })
+            ->orderBy('Lname')
+            ->get();
+            
+        // Get active departments
+        $departments = Department::where('is_active', true)
+            ->orderBy('name')
+            ->pluck('name')
+            ->toArray();
+            
+        // Get leave types
+        $leaveTypes = [
+            ['value' => 'sick', 'label' => 'Sick Leave'],
+            ['value' => 'vacation', 'label' => 'Vacation Leave'],
+            ['value' => 'emergency', 'label' => 'Emergency Leave'],
+            ['value' => 'bereavement', 'label' => 'Bereavement Leave'],
+            ['value' => 'maternity', 'label' => 'Maternity Leave'],
+            ['value' => 'paternity', 'label' => 'Paternity Leave'],
+            ['value' => 'personal', 'label' => 'Personal Leave'],
+            ['value' => 'study', 'label' => 'Study Leave'],
+        ];
+
         return Inertia::render('SLVL/SLVLPage', [
             'leaves' => $leaves,
             'employees' => $employees,
             'departments' => $departments,
+            'leaveTypes' => $leaveTypes,
+            'userRoles' => $userRoles,
             'auth' => [
-                'user' => Auth::user(),
+                'user' => $user,
             ],
         ]);
+    }
+
+    private function getUserRoles($user)
+    {
+        // Check department manager directly from database first
+        $isDepartmentManager = DepartmentManager::where('manager_id', $user->id)->exists();
+        
+        // Check if user is an HRD manager
+        $isHrdManager = $this->isHrdManager($user);
+        
+        $userRoles = [
+            'isSuperAdmin' => $user->hasRole('superadmin'),
+            'isHrdManager' => $isHrdManager,
+            'isDepartmentManager' => $isDepartmentManager || $user->hasRole('department_manager'),
+            'isEmployee' => $user->is_employee || ($user->employee && $user->employee->exists()),
+            'userId' => $user->id,
+            'employeeId' => $user->employee ? $user->employee->id : null,
+            'managedDepartments' => [],
+        ];
+        
+        // If user is a department manager, get their managed departments
+        if ($userRoles['isDepartmentManager']) {
+            $userRoles['managedDepartments'] = DepartmentManager::where('manager_id', $user->id)
+                ->pluck('department')
+                ->toArray();
+        }
+        
+        return $userRoles;
+    }
+
+    private function isHrdManager($user)
+    {
+        // First try checking through the roles relationship
+        if (method_exists($user, 'roles') && $user->roles && $user->roles->count() > 0) {
+            if ($user->roles->contains('name', 'hrd_manager') || $user->roles->contains('slug', 'hrd')) {
+                return true;
+            }
+        }
+        
+        // Then try the hasRole method
+        if (method_exists($user, 'hasRole') && $user->hasRole('hrd_manager')) {
+            return true;
+        }
+        
+        // Fallback check by name or email
+        if (stripos($user->name, 'hrd manager') !== false || 
+            stripos($user->email, 'hrd@') !== false ||
+            stripos($user->email, 'hrdmanager') !== false) {
+            return true;
+        }
+        
+        return false;
+    }
+
+    private function isSuperAdmin($user)
+    {
+        // First try checking through the roles relationship
+        if (method_exists($user, 'roles') && $user->roles && $user->roles->count() > 0) {
+            if ($user->roles->contains('name', 'superadmin') || $user->roles->contains('slug', 'superadmin')) {
+                return true;
+            }
+        }
+        
+        // Then try the hasRole method
+        if (method_exists($user, 'hasRole') && $user->hasRole('superadmin')) {
+            return true;
+        }
+        
+        // Fallback check by user ID or name
+        if ($user->id === 1 || stripos($user->name, 'admin') !== false) {
+            return true;
+        }
+        
+        return false;
     }
 
     /**
@@ -52,7 +189,7 @@ class SLVLController extends Controller
         $validator = Validator::make($request->all(), [
             'employee_ids' => 'required|array',
             'employee_ids.*' => 'exists:employees,id',
-            'type' => 'required|string|in:sick,vacation,emergency,bereavement,maternity,paternity',
+            'type' => 'required|string|in:sick,vacation,emergency,bereavement,maternity,paternity,personal,study',
             'start_date' => 'required|date',
             'end_date' => 'required|date|after_or_equal:start_date',
             'half_day' => 'sometimes|boolean',
@@ -74,21 +211,14 @@ class SLVLController extends Controller
             // Calculate total days
             $startDate = Carbon::parse($request->start_date);
             $endDate = Carbon::parse($request->end_date);
-            $totalDays = $endDate->diffInDays($startDate) + 1; // +1 to include both start and end days
-            
-            // Adjust for half day
-            if ($request->has('half_day') && $request->half_day) {
-                $totalDays -= 0.5;
-            }
+            $totalDays = $this->calculateLeaveDays($startDate, $endDate, $request->half_day, $request->am_pm);
             
             // Process document upload if provided
             $documentPath = null;
             if ($request->hasFile('documents')) {
                 $file = $request->file('documents');
                 $filename = time() . '_' . $file->getClientOriginalName();
-                
-                // Store in the public disk under a 'documents' directory
-                $documentPath = $file->storeAs('documents', $filename, 'public');
+                $documentPath = $file->storeAs('documents/slvl', $filename, 'public');
                 
                 Log::info('Document uploaded', [
                     'original_name' => $file->getClientOriginalName(),
@@ -96,75 +226,64 @@ class SLVLController extends Controller
                 ]);
             }
             
-            // Check if current user is superadmin or hrd
+            // Get the current authenticated user
             $user = Auth::user();
-            $isAutoApproved = false;
-            $userRole = 'unknown';
+            $userRoles = $this->getUserRoles($user);
+            $isDepartmentManager = $userRoles['isDepartmentManager'];
             
-            Log::info('Checking user for auto-approval', [
-                'user_id' => $user->id,
-                'user_name' => $user->name
-            ]);
+            $successCount = 0;
+            $skippedCount = 0;
+            $errorMessages = [];
             
-            // Simple role detection based on username and user ID
-            if (stripos($user->name, 'admin') !== false || $user->id === 1) {
-                $userRole = 'superadmin';
-                $isAutoApproved = true;
-                
-                Log::info('User identified as superadmin', [
-                    'user_id' => $user->id,
-                    'user_name' => $user->name,
-                ]);
-            } elseif (stripos($user->name, 'hrd') !== false || stripos($user->email, 'hrd') !== false) {
-                $userRole = 'hrd';
-                $isAutoApproved = true;
-                
-                Log::info('User identified as HRD', [
-                    'user_id' => $user->id,
-                    'user_name' => $user->name,
-                    'user_email' => $user->email
-                ]);
-            } else {
-                // If we can't determine the role with certainty, try to use the route
-                $routeName = request()->route() ? request()->route()->getName() : null;
-                
-                if ($routeName) {
-                    if (strpos($routeName, 'superadmin.') === 0) {
-                        $userRole = 'superadmin';
-                        $isAutoApproved = true;
-                    } elseif (strpos($routeName, 'hrd.') === 0) {
-                        $userRole = 'hrd';
-                        $isAutoApproved = true;
-                    }
-                    
-                    if ($isAutoApproved) {
-                        Log::info('User role determined from route', [
-                            'user_id' => $user->id,
-                            'route_name' => $routeName,
-                            'determined_role' => $userRole
-                        ]);
-                    }
-                }
-            }
-            
-            // Provide a default for messaging if no specific role is found
-            $roleForDisplay = $isAutoApproved ? ucfirst($userRole) : 'standard user';
-            
-            Log::info('Auto-approval determination', [
-                'user_id' => $user->id,
-                'is_auto_approved' => $isAutoApproved,
-                'role_for_display' => $roleForDisplay
-            ]);
-            
-            // Batch create leave records for all selected employees
-            $leaves = [];
-            $employeeCount = count($request->employee_ids);
-            
-            Log::info('Starting batch creation of leave records', [
-                'employee_count' => $employeeCount
-            ]);
+            DB::beginTransaction();
             
             foreach ($request->employee_ids as $employeeId) {
+                $employee = Employee::with('department')->find($employeeId);
+                
+                if (!$employee) {
+                    $errorMessages[] = "Employee ID $employeeId not found";
+                    continue;
+                }
+                
+                // Check if employee belongs to an active department
+                if (!$employee->department || !$employee->department->is_active) {
+                    $errorMessages[] = "Employee {$employee->Fname} {$employee->Lname} belongs to an inactive department";
+                    continue;
+                }
+                
+                // Check for overlapping leave requests
+                $overlappingLeave = SLVL::where('employee_id', $employeeId)
+                    ->where('status', '!=', 'rejected')
+                    ->where(function($query) use ($startDate, $endDate) {
+                        $query->where(function($q) use ($startDate, $endDate) {
+                            $q->whereBetween('start_date', [$startDate, $endDate])
+                              ->orWhereBetween('end_date', [$startDate, $endDate]);
+                        })->orWhere(function($q) use ($startDate, $endDate) {
+                            $q->where('start_date', '<=', $startDate)
+                              ->where('end_date', '>=', $endDate);
+                        });
+                    })
+                    ->first();
+                
+                if ($overlappingLeave) {
+                    $skippedCount++;
+                    $errorMessages[] = "Employee {$employee->Fname} {$employee->Lname} has overlapping leave request";
+                    continue;
+                }
+                
+                // Check SLVL bank balance if with_pay is true
+                if ($request->with_pay && in_array($request->type, ['sick', 'vacation'])) {
+                    $bankBalance = $this->getSLVLBankBalance($employeeId, $request->type);
+                    if ($bankBalance < $totalDays) {
+                        $errorMessages[] = "Employee {$employee->Fname} {$employee->Lname} has insufficient {$request->type} leave balance ({$bankBalance} days available, {$totalDays} days requested)";
+                        continue;
+                    }
+                }
+                
+                // Find department manager for this employee
+                $deptManager = DepartmentManager::where('department', $employee->department->name)
+                    ->first();
+                
                 $leave = new SLVL([
                     'employee_id' => $employeeId,
                     'type' => $request->type,
@@ -176,53 +295,56 @@ class SLVLController extends Controller
                     'with_pay' => $request->has('with_pay') && $request->with_pay ? true : false,
                     'reason' => $request->reason,
                     'documents_path' => $documentPath ? '/storage/' . $documentPath : null,
-                    'status' => $isAutoApproved ? 'approved' : 'pending'
+                    'created_by' => $user->id,
                 ]);
                 
-                // If auto-approved, set approver info
-                if ($isAutoApproved) {
-                    $leave->approved_by = Auth::id();
-                    $leave->approved_at = now();
-                    $leave->remarks = "Auto-approved: Filed by {$roleForDisplay}";
+                // Set initial status based on conditions
+                if ($isDepartmentManager && 
+                    ($employeeId == $user->employee_id || 
+                     ($employee->department && DepartmentManager::where('manager_id', $user->id)
+                                                        ->where('department', $employee->department->name)
+                                                        ->exists()))) {
                     
-                    Log::info('Leave request auto-approved', [
-                        'employee_id' => $employeeId,
-                        'approved_by' => Auth::id(),
-                        'status' => 'approved'
-                    ]);
+                    // Auto-approve at department manager level
+                    $leave->status = 'manager_approved';
+                    $leave->dept_approved_by = $user->id;
+                    $leave->dept_approved_at = now();
+                    $leave->dept_remarks = 'Auto-approved (Department Manager)';
+                } else {
+                    // Normal pending status
+                    $leave->status = 'pending';
+                }
+                
+                // Assign department manager if found
+                if ($deptManager) {
+                    $leave->dept_manager_id = $deptManager->manager_id;
                 }
                 
                 $leave->save();
-                $leaves[] = $leave;
+                $successCount++;
             }
             
-            // Get updated list of all leaves to return to the frontend
-            $allLeaves = SLVL::with('employee')->latest()->get();
+            DB::commit();
             
-            $successMessage = $isAutoApproved 
-                ? 'Leave requests created and auto-approved successfully' 
-                : 'Leave requests created successfully';
+            $message = "Successfully created {$successCount} leave request(s)";
+            if ($skippedCount > 0) {
+                $message .= ". Skipped {$skippedCount} requests due to conflicts.";
+            }
             
-            Log::info('SLVL store method completed successfully', [
-                'user_id' => Auth::id(),
-                'records_created' => count($leaves),
-                'is_auto_approved' => $isAutoApproved,
-                'message' => $successMessage
-            ]);
+            if (!empty($errorMessages)) {
+                return redirect()->back()->with([
+                    'message' => $message,
+                    'errors' => $errorMessages
+                ]);
+            }
             
-            return redirect()->back()->with([
-                'message' => $successMessage,
-                'leaves' => $allLeaves
-            ]);
+            return redirect()->back()->with('message', $message);
         } catch (\Exception $e) {
+            DB::rollBack();
             Log::error('Failed to create leave requests', [
                 'user_id' => Auth::id(),
                 'error_message' => $e->getMessage(),
-                'error_code' => $e->getCode(),
-                'error_file' => $e->getFile(),
-                'error_line' => $e->getLine(),
                 'error_trace' => $e->getTraceAsString(),
-                'request' => $request->except(['documents'])
             ]);
             
             return redirect()->back()
@@ -232,53 +354,324 @@ class SLVLController extends Controller
     }
 
     /**
-     * Approve or reject a leave request.
+     * Calculate the number of leave days excluding weekends
+     */
+    private function calculateLeaveDays($startDate, $endDate, $halfDay = false, $amPm = null)
+    {
+        $totalDays = 0;
+        $current = $startDate->copy();
+        
+        while ($current <= $endDate) {
+            // Skip weekends (Saturday = 6, Sunday = 0)
+            if ($current->dayOfWeek !== 0 && $current->dayOfWeek !== 6) {
+                $totalDays++;
+            }
+            $current->addDay();
+        }
+        
+        // Adjust for half day
+        if ($halfDay && $totalDays == 1) {
+            $totalDays = 0.5;
+        }
+        
+        return $totalDays;
+    }
+
+    /**
+     * Get SLVL bank balance for an employee
+     */
+    private function getSLVLBankBalance($employeeId, $leaveType)
+    {
+        $bank = SLVLBank::where('employee_id', $employeeId)
+            ->where('leave_type', $leaveType)
+            ->first();
+            
+        if (!$bank) {
+            // Create default bank if doesn't exist
+            $bank = SLVLBank::create([
+                'employee_id' => $employeeId,
+                'leave_type' => $leaveType,
+                'total_days' => $leaveType === 'sick' ? 15 : 15, // Default 15 days each
+                'used_days' => 0,
+                'year' => now()->year
+            ]);
+        }
+        
+        return $bank->total_days - $bank->used_days;
+    }
+
+    /**
+     * Get SLVL bank information for an employee
+     */
+    public function getSLVLBank(Request $request, $employeeId)
+    {
+        $banks = SLVLBank::where('employee_id', $employeeId)
+            ->where('year', now()->year)
+            ->get()
+            ->keyBy('leave_type');
+            
+        $bankInfo = [];
+        $leaveTypes = ['sick', 'vacation'];
+        
+        foreach ($leaveTypes as $type) {
+            if (isset($banks[$type])) {
+                $bank = $banks[$type];
+                $bankInfo[$type] = [
+                    'total_days' => $bank->total_days,
+                    'used_days' => $bank->used_days,
+                    'remaining_days' => $bank->total_days - $bank->used_days
+                ];
+            } else {
+                // Create default if doesn't exist
+                $defaultDays = 15; // Default 15 days for both sick and vacation
+                SLVLBank::create([
+                    'employee_id' => $employeeId,
+                    'leave_type' => $type,
+                    'total_days' => $defaultDays,
+                    'used_days' => 0,
+                    'year' => now()->year
+                ]);
+                
+                $bankInfo[$type] = [
+                    'total_days' => $defaultDays,
+                    'used_days' => 0,
+                    'remaining_days' => $defaultDays
+                ];
+            }
+        }
+        
+        return response()->json($bankInfo);
+    }
+
+    /**
+     * Bulk update the status of multiple leave requests.
+     */
+    public function bulkUpdateStatus(Request $request)
+    {
+        $user = Auth::user();
+        
+        // Validate request
+        $validated = $request->validate([
+            'leave_ids' => 'required|array',
+            'leave_ids.*' => 'required|integer|exists:slvls,id',
+            'status' => 'required|in:manager_approved,approved,rejected,force_approved',
+            'remarks' => 'nullable|string|max:500',
+        ]);
+        
+        Log::info('Bulk update of leave statuses initiated', [
+            'user_id' => $user->id,
+            'user_name' => $user->name,
+            'count' => count($validated['leave_ids']),
+            'target_status' => $validated['status']
+        ]);
+        
+        $successCount = 0;
+        $failCount = 0;
+        $errors = [];
+        
+        DB::beginTransaction();
+        
+        try {
+            foreach ($validated['leave_ids'] as $leaveId) {
+                $leave = SLVL::findOrFail($leaveId);
+                $currentStatus = $leave->status;
+                
+                // Check permission for the specific leave
+                $canUpdate = $this->canUpdateLeaveStatus($user, $leave, $currentStatus, $validated['status']);
+                
+                if (!$canUpdate) {
+                    $failCount++;
+                    $errors[] = "Not authorized to update leave #{$leaveId} from status '{$currentStatus}' to '{$validated['status']}'";
+                    continue;
+                }
+                
+                // Update based on status
+                $this->updateLeaveStatus($leave, $validated['status'], $validated['remarks'], $user);
+                
+                $successCount++;
+                
+                Log::info("Successfully updated leave #{$leaveId}", [
+                    'from_status' => $currentStatus,
+                    'to_status' => $validated['status'],
+                    'by_user' => $user->name
+                ]);
+            }
+            
+            DB::commit();
+            
+            $message = "{$successCount} leave requests updated successfully." . 
+                    ($failCount > 0 ? " {$failCount} updates failed." : "");
+            
+            return redirect()->back()->with('message', $message);
+            
+        } catch (\Exception $e) {
+            DB::rollBack();
+            
+            Log::error('Error during bulk leave update', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return redirect()->back()->with('error', 'Error updating leave statuses: ' . $e->getMessage());
+        }
+    }
+
+    private function canUpdateLeaveStatus($user, $leave, $currentStatus, $newStatus)
+    {
+        $userRoles = $this->getUserRoles($user);
+        
+        // Superadmin can do anything
+        if ($userRoles['isSuperAdmin']) {
+            return true;
+        }
+        
+        // Department manager approval
+        if ($currentStatus === 'pending' && $newStatus === 'manager_approved') {
+            return $this->isDepartmentManagerFor($user, $leave);
+        }
+        
+        // HRD manager final approval
+        if ($currentStatus === 'manager_approved' && $newStatus === 'approved') {
+            return $userRoles['isHrdManager'];
+        }
+        
+        // Rejection
+        if ($newStatus === 'rejected') {
+            if ($currentStatus === 'pending') {
+                return $this->isDepartmentManagerFor($user, $leave);
+            } elseif ($currentStatus === 'manager_approved') {
+                return $userRoles['isHrdManager'];
+            }
+        }
+        
+        // Force approval (superadmin only)
+        if ($newStatus === 'force_approved') {
+            return $userRoles['isSuperAdmin'];
+        }
+        
+        return false;
+    }
+
+    private function isDepartmentManagerFor($user, $leave)
+    {
+        // Check if user is assigned as department manager for this leave
+        if ($leave->dept_manager_id === $user->id) {
+            return true;
+        }
+        
+        // Check if user manages the employee's department
+        $employeeDepartment = $leave->employee ? $leave->employee->Department : null;
+        
+        if ($employeeDepartment) {
+            return DepartmentManager::where('manager_id', $user->id)
+                ->where('department', $employeeDepartment)
+                ->exists();
+        }
+        
+        return false;
+    }
+
+    private function updateLeaveStatus($leave, $status, $remarks, $user)
+    {
+        if ($leave->status === 'pending') {
+            // Department manager approval/rejection
+            $leave->dept_approved_by = $user->id;
+            $leave->dept_approved_at = now();
+            $leave->dept_remarks = $remarks ?? 'Bulk action by department manager';
+        } elseif ($leave->status === 'manager_approved') {
+            // HRD manager approval/rejection
+            $leave->hrd_approved_by = $user->id;
+            $leave->hrd_approved_at = now();
+            $leave->hrd_remarks = $remarks ?? 'Bulk action by HRD manager';
+        }
+        
+        // Handle force approval
+        if ($status === 'force_approved') {
+            if (!$leave->dept_approved_by) {
+                $leave->dept_approved_by = $user->id;
+                $leave->dept_approved_at = now();
+                $leave->dept_remarks = 'Administrative override: ' . ($remarks ?? 'Force approved by admin');
+            }
+            
+            $leave->hrd_approved_by = $user->id;
+            $leave->hrd_approved_at = now();
+            $leave->hrd_remarks = 'Administrative override: ' . ($remarks ?? 'Force approved by admin');
+            
+            $status = 'approved'; // Convert to regular approved status
+        }
+        
+        // Update SLVL bank if approved and with pay
+        if (($status === 'approved' || $status === 'manager_approved') && 
+            $leave->with_pay && 
+            in_array($leave->type, ['sick', 'vacation']) && 
+            $leave->status !== 'approved') {
+            
+            $this->updateSLVLBank($leave->employee_id, $leave->type, $leave->total_days);
+        }
+        
+        $leave->status = $status;
+        $leave->save();
+    }
+
+    private function updateSLVLBank($employeeId, $leaveType, $daysUsed)
+    {
+        $bank = SLVLBank::where('employee_id', $employeeId)
+            ->where('leave_type', $leaveType)
+            ->where('year', now()->year)
+            ->first();
+            
+        if ($bank) {
+            $bank->used_days += $daysUsed;
+            $bank->save();
+        }
+    }
+
+    /**
+     * Update the status of a leave request.
      */
     public function updateStatus(Request $request, $id)
     {
-        $validator = Validator::make($request->all(), [
-            'status' => 'required|in:approved,rejected',
+        $user = Auth::user();
+        
+        $validated = $request->validate([
+            'status' => 'required|in:manager_approved,approved,rejected,force_approved',
             'remarks' => 'nullable|string|max:500',
         ]);
 
-        if ($validator->fails()) {
-            return redirect()->back()
-                ->withErrors($validator)
-                ->withInput();
-        }
-
         try {
             $leave = SLVL::findOrFail($id);
+            $currentStatus = $leave->status;
             
-            // Only allow status updates if current status is pending
-            if ($leave->status !== 'pending') {
-                return redirect()->back()
-                    ->with('error', 'Cannot update leave request that has already been ' . $leave->status);
+            // Check permission
+            $canUpdate = $this->canUpdateLeaveStatus($user, $leave, $currentStatus, $validated['status']);
+            
+            if (!$canUpdate) {
+                return response()->json([
+                    'message' => 'You are not authorized to update this leave request status.'
+                ], 403);
             }
             
-            $leave->status = $request->status;
-            $leave->remarks = $request->remarks;
-            $leave->approved_by = Auth::id();
-            $leave->approved_at = now();
-            $leave->save();
+            // Update the status
+            $this->updateLeaveStatus($leave, $validated['status'], $validated['remarks'], $user);
             
-            // Get updated list of all leaves to return to the frontend
-            $allLeaves = SLVL::with('employee')->latest()->get();
+            // Get fresh leave data for the response
+            $leave = SLVL::with(['employee', 'creator', 'departmentManager', 'departmentApprover', 'hrdApprover'])
+                ->find($leave->id);
             
-            return redirect()->back()->with([
-                'message' => 'Leave request status updated successfully',
-                'leaves' => $allLeaves
+            return response()->json([
+                'message' => 'Leave status updated successfully.',
+                'leave' => $leave
             ]);
+            
         } catch (\Exception $e) {
             Log::error('Failed to update leave status', [
-                'id' => $id,
+                'leave_id' => $id,
                 'error' => $e->getMessage(),
-                'request' => $request->all()
             ]);
             
-            return redirect()->back()
-                ->with('error', 'Failed to update leave status: ' . $e->getMessage())
-                ->withInput();
+            return response()->json([
+                'message' => 'Failed to update leave status: ' . $e->getMessage()
+            ], 500);
         }
     }
 
@@ -289,16 +682,23 @@ class SLVLController extends Controller
     {
         try {
             $leave = SLVL::findOrFail($id);
+            $user = Auth::user();
             
-            // Only allow deletion if status is pending
+            // Check authorization
+            if (!$this->isSuperAdmin($user) && 
+                $leave->created_by !== $user->id && 
+                !($this->isDepartmentManagerFor($user, $leave) && $leave->status === 'pending')) {
+                
+                return back()->with('error', 'You are not authorized to delete this leave request');
+            }
+            
+            // Can only delete if status is pending
             if ($leave->status !== 'pending') {
-                return redirect()->back()
-                    ->with('error', 'Cannot delete leave request that has already been ' . $leave->status);
+                return back()->with('error', 'Only pending leave requests can be deleted');
             }
             
             // Delete the document file if it exists
             if ($leave->documents_path) {
-                // Remove '/storage/' from the beginning to get the relative path
                 $path = str_replace('/storage/', '', $leave->documents_path);
                 if (Storage::disk('public')->exists($path)) {
                     Storage::disk('public')->delete($path);
@@ -308,13 +708,14 @@ class SLVLController extends Controller
             
             $leave->delete();
             
-            // Get updated list of all leaves to return to the frontend
-            $allLeaves = SLVL::with('employee')->latest()->get();
-            
-            return redirect()->back()->with([
-                'message' => 'Leave request deleted successfully',
-                'leaves' => $allLeaves
+            Log::info('Leave request deleted', [
+                'leave_id' => $leave->id,
+                'deleted_by' => $user->name,
+                'user_id' => $user->id
             ]);
+            
+            return redirect()->back()->with('message', 'Leave request deleted successfully');
+            
         } catch (\Exception $e) {
             Log::error('Failed to delete leave request', [
                 'id' => $id,
@@ -331,10 +732,35 @@ class SLVLController extends Controller
     public function export(Request $request)
     {
         try {
-            // Start with a base query
+            $user = Auth::user();
+            $userRoles = $this->getUserRoles($user);
+            
+            // Start with filtered query based on user role
             $query = SLVL::with('employee', 'approver');
             
-            // Apply filters if provided
+            // Apply role-based filtering (same as index method)
+            if ($userRoles['isEmployee'] && !$userRoles['isDepartmentManager'] && !$userRoles['isHrdManager'] && !$userRoles['isSuperAdmin']) {
+                $employeeId = $user->employee ? $user->employee->id : null;
+                if ($employeeId) {
+                    $query->where('employee_id', $employeeId);
+                } else {
+                    $query->where('created_by', $user->id);
+                }
+            } elseif ($userRoles['isDepartmentManager'] && !$userRoles['isSuperAdmin']) {
+                $managedDepartments = DepartmentManager::where('manager_id', $user->id)
+                    ->pluck('department')
+                    ->toArray();
+                    
+                $query->where(function($q) use ($user, $managedDepartments) {
+                    $q->where('created_by', $user->id)
+                        ->orWhere('dept_manager_id', $user->id)
+                        ->orWhereHas('employee', function($subQ) use ($managedDepartments) {
+                            $subQ->whereIn('Department', $managedDepartments);
+                        });
+                });
+            }
+            
+            // Apply additional filters from request
             if ($request->has('status') && $request->status) {
                 $query->where('status', $request->status);
             }
@@ -368,7 +794,7 @@ class SLVLController extends Controller
             $leaves = $query->latest()->get();
             
             // Create a spreadsheet
-            $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
+            $spreadsheet = new Spreadsheet();
             $sheet = $spreadsheet->getActiveSheet();
             
             // Set headers
@@ -385,10 +811,11 @@ class SLVLController extends Controller
             $sheet->setCellValue('K1', 'With Pay');
             $sheet->setCellValue('L1', 'Status');
             $sheet->setCellValue('M1', 'Reason');
-            $sheet->setCellValue('N1', 'Remarks');
-            $sheet->setCellValue('O1', 'Filed Date');
-            $sheet->setCellValue('P1', 'Action Date');
-            $sheet->setCellValue('Q1', 'Approved/Rejected By');
+            $sheet->setCellValue('N1', 'Dept. Remarks');
+            $sheet->setCellValue('O1', 'HRD Remarks');
+            $sheet->setCellValue('P1', 'Filed Date');
+            $sheet->setCellValue('Q1', 'Action Date');
+            $sheet->setCellValue('R1', 'Approved/Rejected By');
             
             // Style headers
             $headerStyle = [
@@ -397,20 +824,20 @@ class SLVLController extends Controller
                     'color' => ['rgb' => 'FFFFFF'],
                 ],
                 'fill' => [
-                    'fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID,
+                    'fillType' => Fill::FILL_SOLID,
                     'startColor' => ['rgb' => '4472C4'],
                 ],
                 'borders' => [
                     'allBorders' => [
-                        'borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN,
+                        'borderStyle' => Border::BORDER_THIN,
                     ],
                 ],
             ];
             
-            $sheet->getStyle('A1:Q1')->applyFromArray($headerStyle);
+            $sheet->getStyle('A1:R1')->applyFromArray($headerStyle);
             
             // Auto-adjust column width
-            foreach(range('A', 'Q') as $column) {
+            foreach(range('A', 'R') as $column) {
                 $sheet->getColumnDimension($column)->setAutoSize(true);
             }
             
@@ -430,10 +857,11 @@ class SLVLController extends Controller
                 $sheet->setCellValue('K' . $row, $leave->with_pay ? 'Yes' : 'No');
                 $sheet->setCellValue('L' . $row, ucfirst($leave->status));
                 $sheet->setCellValue('M' . $row, $leave->reason ?? 'N/A');
-                $sheet->setCellValue('N' . $row, $leave->remarks ?? 'N/A');
-                $sheet->setCellValue('O' . $row, $leave->created_at ? Carbon::parse($leave->created_at)->format('Y-m-d h:i A') : 'N/A');
-                $sheet->setCellValue('P' . $row, $leave->approved_at ? Carbon::parse($leave->approved_at)->format('Y-m-d h:i A') : 'N/A');
-                $sheet->setCellValue('Q' . $row, $leave->approver ? $leave->approver->name : 'N/A');
+                $sheet->setCellValue('N' . $row, $leave->dept_remarks ?? 'N/A');
+                $sheet->setCellValue('O' . $row, $leave->hrd_remarks ?? 'N/A');
+                $sheet->setCellValue('P' . $row, $leave->created_at ? Carbon::parse($leave->created_at)->format('Y-m-d h:i A') : 'N/A');
+                $sheet->setCellValue('Q' . $row, $leave->dept_approved_at ? Carbon::parse($leave->dept_approved_at)->format('Y-m-d h:i A') : 'N/A');
+                $sheet->setCellValue('R' . $row, $leave->departmentApprover ? $leave->departmentApprover->name : ($leave->hrdApprover ? $leave->hrdApprover->name : 'N/A'));
                 
                 // Apply status-based styling
                 if ($leave->status === 'approved') {
@@ -456,37 +884,167 @@ class SLVLController extends Controller
             // Add borders to all data cells
             $lastRow = $row - 1;
             if ($lastRow >= 2) {
-                $sheet->getStyle('A2:Q' . $lastRow)->applyFromArray([
+                $sheet->getStyle('A2:R' . $lastRow)->applyFromArray([
                     'borders' => [
                         'allBorders' => [
-                            'borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN,
+                            'borderStyle' => Border::BORDER_THIN,
                         ],
                     ],
                 ]);
             }
             
             // Set the filename
-            $filename = 'Leave_Report_' . Carbon::now()->format('Y-m-d_His') . '.xlsx';
+            $filename = 'SLVL_Report_' . Carbon::now()->format('Y-m-d_His') . '.xlsx';
             
             // Create the Excel file
-            $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($spreadsheet);
+            $writer = new Xlsx($spreadsheet);
             
-            // Set header information for download
-            header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-            header('Content-Disposition: attachment;filename="' . $filename . '"');
-            header('Cache-Control: max-age=0');
+            // Save to temporary file
+            $tempFile = tempnam(sys_get_temp_dir(), 'slvl_export_');
+            $writer->save($tempFile);
             
-            // Save file to php://output
-            $writer->save('php://output');
-            exit;
+            // Return response
+            return response()->download($tempFile, $filename, [
+                'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            ])->deleteFileAfterSend(true);
             
         } catch (\Exception $e) {
-            Log::error('Failed to export leave data', [
+            Log::error('Failed to export SLVL data', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
             
-            return redirect()->back()->with('error', 'Failed to export leave data: ' . $e->getMessage());
+            return redirect()->back()->with('error', 'Failed to export SLVL data: ' . $e->getMessage());
         }
+    }
+
+    /**
+     * Add days to SLVL bank (HRD and Superadmin only)
+     */
+    public function addDaysToBank(Request $request)
+    {
+        $user = Auth::user();
+        
+        // Only HRD and superadmin can add days to bank
+        if (!$this->isHrdManager($user) && !$this->isSuperAdmin($user)) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+        
+        $validated = $request->validate([
+            'employee_id' => 'required|exists:employees,id',
+            'leave_type' => 'required|in:sick,vacation',
+            'days' => 'required|numeric|min:0.5|max:365',
+            'reason' => 'required|string|max:500',
+        ]);
+        
+        try {
+            DB::beginTransaction();
+            
+            $bank = SLVLBank::updateOrCreate(
+                [
+                    'employee_id' => $validated['employee_id'],
+                    'leave_type' => $validated['leave_type'],
+                    'year' => now()->year
+                ],
+                [
+                    'total_days' => DB::raw('total_days + ' . $validated['days'])
+                ]
+            );
+            
+            // Log the bank addition
+            Log::info('SLVL bank days added', [
+                'employee_id' => $validated['employee_id'],
+                'leave_type' => $validated['leave_type'],
+                'days_added' => $validated['days'],
+                'reason' => $validated['reason'],
+                'added_by' => $user->name,
+                'added_by_id' => $user->id
+            ]);
+            
+            DB::commit();
+            
+            return response()->json([
+                'message' => "Successfully added {$validated['days']} {$validated['leave_type']} days to bank",
+                'bank' => $bank
+            ]);
+            
+        } catch (\Exception $e) {
+            DB::rollBack();
+            
+            Log::error('Failed to add days to SLVL bank', [
+                'error' => $e->getMessage(),
+                'request' => $validated
+            ]);
+            
+            return response()->json([
+                'message' => 'Failed to add days to bank: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Force approve leave requests (admin only).
+     */
+    public function forceApprove(Request $request)
+    {
+        if (!$this->isSuperAdmin(Auth::user())) {
+            return back()->with('error', 'Only administrators can force approve leave requests.');
+        }
+        
+        $validated = $request->validate([
+            'leave_ids' => 'required|array',
+            'leave_ids.*' => 'required|integer|exists:slvls,id',
+            'remarks' => 'nullable|string|max:500',
+        ]);
+        
+        $user = Auth::user();
+        $remarks = $validated['remarks'] ?? 'Administrative override: Force approved by admin';
+        $successCount = 0;
+        $failCount = 0;
+        $errors = [];
+        
+        Log::info('Force approval of leave requests initiated', [
+            'admin_id' => $user->id,
+            'admin_name' => $user->name,
+            'count' => count($validated['leave_ids'])
+        ]);
+        
+        foreach ($validated['leave_ids'] as $leaveId) {
+            try {
+                $leave = SLVL::findOrFail($leaveId);
+                
+                // Skip already approved leaves
+                if ($leave->status === 'approved') {
+                    $errors[] = "Leave #{$leaveId} is already approved";
+                    $failCount++;
+                    continue;
+                }
+                
+                // Force approve
+                $this->updateLeaveStatus($leave, 'force_approved', $remarks, $user);
+                
+                $successCount++;
+                
+                Log::info("Force approved leave #{$leaveId}", [
+                    'admin_id' => $user->id,
+                    'leave_id' => $leaveId,
+                    'previous_status' => $leave->getOriginal('status')
+                ]);
+            } catch (\Exception $e) {
+                Log::error("Error force approving leave #{$leaveId}: " . $e->getMessage());
+                $failCount++;
+                $errors[] = "Error force approving leave #{$leaveId}: " . $e->getMessage();
+            }
+        }
+        
+        $message = "{$successCount} leave requests force approved successfully.";
+        if ($failCount > 0) {
+            $message .= " {$failCount} force approvals failed.";
+        }
+        
+        return back()->with([
+            'message' => $message,
+            'errors' => $errors
+        ]);
     }
 }

@@ -1,12 +1,21 @@
 // resources/js/Pages/SLVL/SLVLList.jsx
 import React, { useState, useEffect, useRef } from 'react';
 import { format } from 'date-fns';
-import { Download, Search, X } from 'lucide-react';
+import { Download, Search, X, Filter, Loader2 } from 'lucide-react';
 import SLVLStatusBadge from './SLVLStatusBadge';
 import SLVLDetailModal from './SLVLDetailModal';
-import MultiBulkActionModal from './MultiBulkActionModal';
+import SLVLBulkActionModal from './SLVLBulkActionModal';
+import { router } from '@inertiajs/react';
+import { toast } from 'react-toastify';
 
-const SLVLList = ({ leaves, onStatusUpdate, onDelete, refreshInterval = 5000 }) => {
+const SLVLList = ({ 
+    leaves, 
+    onStatusUpdate, 
+    onDelete, 
+    refreshInterval = 5000,
+    userRoles = {},
+    processing = false
+}) => {
     const [selectedLeave, setSelectedLeave] = useState(null);
     const [showModal, setShowModal] = useState(false);
     const [filterStatus, setFilterStatus] = useState('');
@@ -14,6 +23,12 @@ const SLVLList = ({ leaves, onStatusUpdate, onDelete, refreshInterval = 5000 }) 
     const [filteredLeaves, setFilteredLeaves] = useState(leaves || []);
     const [localLeaves, setLocalLeaves] = useState(leaves || []);
     const timerRef = useRef(null);
+    
+    // Loading states for various operations
+    const [localProcessing, setLocalProcessing] = useState(false);
+    const [deletingId, setDeletingId] = useState(null);
+    const [updatingId, setUpdatingId] = useState(null);
+    const [exporting, setExporting] = useState(false);
     
     // Search functionality
     const [searchTerm, setSearchTerm] = useState('');
@@ -24,38 +39,49 @@ const SLVLList = ({ leaves, onStatusUpdate, onDelete, refreshInterval = 5000 }) 
     const [showBulkActionModal, setShowBulkActionModal] = useState(false);
     const [selectAll, setSelectAll] = useState(false);
     
+    // Leave types for filtering
+    const leaveTypes = [
+        { value: 'sick', label: 'Sick Leave' },
+        { value: 'vacation', label: 'Vacation Leave' },
+        { value: 'emergency', label: 'Emergency Leave' },
+        { value: 'bereavement', label: 'Bereavement Leave' },
+        { value: 'maternity', label: 'Maternity Leave' },
+        { value: 'paternity', label: 'Paternity Leave' },
+        { value: 'personal', label: 'Personal Leave' },
+        { value: 'study', label: 'Study Leave' },
+    ];
+    
     // Update local state when props change
     useEffect(() => {
-        setLocalLeaves(leaves || []);
-        applyFilters(leaves || [], filterStatus, filterType, searchTerm, dateRange);
+        if (!leaves) return;
+        setLocalLeaves(leaves);
+        applyFilters(leaves, filterStatus, filterType, searchTerm, dateRange);
     }, [leaves]);
     
     // Set up auto-refresh timer
     useEffect(() => {
-        // Function to fetch fresh data
         const refreshData = async () => {
             try {
-                // Here you would typically fetch fresh data from your API
-                if (typeof window.refreshLeaves === 'function') {
-                    const freshData = await window.refreshLeaves();
+                if (typeof window.refreshSLVL === 'function') {
+                    const freshData = await window.refreshSLVL();
                     setLocalLeaves(freshData);
                     applyFilters(freshData, filterStatus, filterType, searchTerm, dateRange);
                 }
             } catch (error) {
-                console.error('Error refreshing leave data:', error);
+                console.error('Error refreshing SLVL data:', error);
             }
         };
         
-        // Set up interval
-        timerRef.current = setInterval(refreshData, refreshInterval);
+        if (!processing && !localProcessing) {
+            timerRef.current = setInterval(refreshData, refreshInterval);
+        }
         
-        // Clean up on component unmount
         return () => {
             if (timerRef.current) {
                 clearInterval(timerRef.current);
             }
         };
-    }, [refreshInterval, filterStatus, filterType, searchTerm, dateRange]);
+    }, [refreshInterval, filterStatus, filterType, searchTerm, dateRange, processing, localProcessing]);
     
     // Function to apply all filters
     const applyFilters = (data, status, type, search, dates) => {
@@ -75,27 +101,23 @@ const SLVLList = ({ leaves, onStatusUpdate, onDelete, refreshInterval = 5000 }) 
         if (search) {
             const searchLower = search.toLowerCase();
             result = result.filter(leave => 
-                // Search by employee name
                 (leave.employee && 
                     ((leave.employee.Fname && leave.employee.Fname.toLowerCase().includes(searchLower)) || 
                      (leave.employee.Lname && leave.employee.Lname.toLowerCase().includes(searchLower)))) ||
-                // Search by employee ID
                 (leave.employee && leave.employee.idno && leave.employee.idno.toString().includes(searchLower)) ||
-                // Search by department
                 (leave.employee && leave.employee.Department && leave.employee.Department.toLowerCase().includes(searchLower)) ||
-                // Search by reason
                 (leave.reason && leave.reason.toLowerCase().includes(searchLower))
             );
         }
         
-        // Apply date range filter (using start_date)
+        // Apply date range filter
         if (dates.from && dates.to) {
             result = result.filter(leave => {
                 if (!leave.start_date) return false;
                 const leaveDate = new Date(leave.start_date);
                 const fromDate = new Date(dates.from);
                 const toDate = new Date(dates.to);
-                toDate.setHours(23, 59, 59); // Include the entire "to" day
+                toDate.setHours(23, 59, 59);
                 
                 return leaveDate >= fromDate && leaveDate <= toDate;
             });
@@ -111,37 +133,39 @@ const SLVLList = ({ leaves, onStatusUpdate, onDelete, refreshInterval = 5000 }) 
                 if (!leave.start_date) return false;
                 const leaveDate = new Date(leave.start_date);
                 const toDate = new Date(dates.to);
-                toDate.setHours(23, 59, 59); // Include the entire "to" day
+                toDate.setHours(23, 59, 59);
                 return leaveDate <= toDate;
             });
         }
         
         setFilteredLeaves(result);
+        return result;
     };
     
-    // Handle status filter change
+    // Handle filter changes
     const handleStatusFilterChange = (e) => {
+        if (processing || localProcessing) return;
         const status = e.target.value;
         setFilterStatus(status);
         applyFilters(localLeaves, status, filterType, searchTerm, dateRange);
     };
     
-    // Handle type filter change
     const handleTypeFilterChange = (e) => {
+        if (processing || localProcessing) return;
         const type = e.target.value;
         setFilterType(type);
         applyFilters(localLeaves, filterStatus, type, searchTerm, dateRange);
     };
     
-    // Handle search input change
     const handleSearchChange = (e) => {
+        if (processing || localProcessing) return;
         const value = e.target.value;
         setSearchTerm(value);
         applyFilters(localLeaves, filterStatus, filterType, value, dateRange);
     };
     
-    // Handle date range changes
     const handleDateRangeChange = (field, value) => {
+        if (processing || localProcessing) return;
         const newDateRange = { ...dateRange, [field]: value };
         setDateRange(newDateRange);
         applyFilters(localLeaves, filterStatus, filterType, searchTerm, newDateRange);
@@ -149,6 +173,7 @@ const SLVLList = ({ leaves, onStatusUpdate, onDelete, refreshInterval = 5000 }) 
     
     // Clear all filters
     const clearFilters = () => {
+        if (processing || localProcessing) return;
         setFilterStatus('');
         setFilterType('');
         setSearchTerm('');
@@ -156,63 +181,10 @@ const SLVLList = ({ leaves, onStatusUpdate, onDelete, refreshInterval = 5000 }) 
         applyFilters(localLeaves, '', '', '', { from: '', to: '' });
     };
     
-    // Format date safely
-    const formatDate = (dateString) => {
-        try {
-            return format(new Date(dateString), 'yyyy-MM-dd');
-        } catch (error) {
-            console.error('Error formatting date:', error);
-            return 'Invalid date';
-        }
-    };
-    
-    // Get leave type label
-    const getLeaveTypeLabel = (type) => {
-        switch (type) {
-            case 'sick':
-                return 'Sick Leave';
-            case 'vacation':
-                return 'Vacation Leave';
-            case 'emergency':
-                return 'Emergency Leave';
-            case 'bereavement':
-                return 'Bereavement Leave';
-            case 'maternity':
-                return 'Maternity Leave';
-            case 'paternity':
-                return 'Paternity Leave';
-            default:
-                return type ? type.charAt(0).toUpperCase() + type.slice(1) + ' Leave' : 'N/A';
-        }
-    };
-    
-    // Calculate total leave days for display
-    const calculateLeaveDays = (leave) => {
-        if (!leave.start_date || !leave.end_date) return 'N/A';
-        
-        try {
-            const start = new Date(leave.start_date);
-            const end = new Date(leave.end_date);
-            
-            // Calculate the difference in days
-            const diffTime = Math.abs(end - start);
-            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1; // +1 to include both start and end days
-            
-            // Adjust for half day if applicable
-            if (leave.half_day) {
-                return (diffDays - 0.5).toFixed(1);
-            }
-            
-            return diffDays.toString();
-        } catch (error) {
-            console.error('Error calculating leave days:', error);
-            return 'N/A';
-        }
-    };
-    
     // Open detail modal
     const handleViewDetail = (leave) => {
-        // Pause auto-refresh when modal is open
+        if (processing || localProcessing) return;
+        
         if (timerRef.current) {
             clearInterval(timerRef.current);
         }
@@ -226,57 +198,132 @@ const SLVLList = ({ leaves, onStatusUpdate, onDelete, refreshInterval = 5000 }) 
         setShowModal(false);
         setSelectedLeave(null);
         
-        // Resume auto-refresh when modal is closed
-        const refreshData = async () => {
-            try {
-                if (typeof window.refreshLeaves === 'function') {
-                    const freshData = await window.refreshLeaves();
-                    setLocalLeaves(freshData);
-                    applyFilters(freshData, filterStatus, filterType, searchTerm, dateRange);
+        if (!processing && !localProcessing) {
+            const refreshData = async () => {
+                try {
+                    if (typeof window.refreshSLVL === 'function') {
+                        const freshData = await window.refreshSLVL();
+                        setLocalLeaves(freshData);
+                        applyFilters(freshData, filterStatus, filterType, searchTerm, dateRange);
+                    }
+                } catch (error) {
+                    console.error('Error refreshing SLVL data:', error);
                 }
-            } catch (error) {
-                console.error('Error refreshing leave data:', error);
-            }
-        };
-        
-        timerRef.current = setInterval(refreshData, refreshInterval);
+            };
+            
+            timerRef.current = setInterval(refreshData, refreshInterval);
+        }
     };
     
-    // Handle status update (from modal)
+    // Handle status update
     const handleStatusUpdate = (id, data) => {
-        // Check if onStatusUpdate is a function before calling it
+        setUpdatingId(id);
+        setLocalProcessing(true);
+        
         if (typeof onStatusUpdate === 'function') {
-            // Pass the entire data object to the parent component
-            onStatusUpdate(id, data);
+            try {
+                const result = onStatusUpdate(id, data);
+                
+                if (result && typeof result.then === 'function') {
+                    result
+                        .then(() => {
+                            setUpdatingId(null);
+                            setLocalProcessing(false);
+                        })
+                        .catch((error) => {
+                            console.error('Error updating status:', error);
+                            alert('Error: Unable to update status. Please try again.');
+                            setUpdatingId(null);
+                            setLocalProcessing(false);
+                        });
+                } else {
+                    setUpdatingId(null);
+                    setLocalProcessing(false);
+                }
+            } catch (error) {
+                console.error('Error updating status:', error);
+                alert('Error: Unable to update status. Please try again.');
+                setUpdatingId(null);
+                setLocalProcessing(false);
+            }
         } else {
             console.error('onStatusUpdate prop is not a function');
             alert('Error: Unable to update status. Please refresh the page and try again.');
+            setUpdatingId(null);
+            setLocalProcessing(false);
         }
         handleCloseModal();
     };
     
-    // Handle leave deletion
     const handleDelete = (id) => {
         if (confirm('Are you sure you want to delete this leave request?')) {
-            onDelete(id);
+            setDeletingId(id);
+            setLocalProcessing(true);
+            
+            router.delete(route('slvl.destroy', id), {
+                preserveScroll: true,
+                onSuccess: (page) => {
+                    const updatedLeaves = localLeaves.filter(leave => leave.id !== id);
+                    setLocalLeaves(updatedLeaves);
+                    applyFilters(updatedLeaves, filterStatus, filterType, searchTerm, dateRange);
+                    
+                    toast.success('Leave request deleted successfully');
+                    setDeletingId(null);
+                    setLocalProcessing(false);
+                },
+                onError: (errors) => {
+                    console.error('Error deleting leave:', errors);
+                    toast.error('Failed to delete leave request');
+                    setDeletingId(null);
+                    setLocalProcessing(false);
+                }
+            });
+        }
+    };
+    
+    // Format date safely
+    const formatDate = (dateString) => {
+        try {
+            return format(new Date(dateString), 'yyyy-MM-dd');
+        } catch (error) {
+            console.error('Error formatting date:', error);
+            return 'Invalid date';
         }
     };
 
     // Multiple selection handlers
     const toggleSelectAll = () => {
+        if (processing || localProcessing) return;
+        
         setSelectAll(!selectAll);
         if (!selectAll) {
-            // Only select pending leaves
-            const pendingIds = filteredLeaves
-                .filter(leave => leave.status === 'pending')
-                .map(leave => leave.id);
-            setSelectedIds(pendingIds);
+            let selectableIds = [];
+            
+            if (userRoles.isDepartmentManager) {
+                selectableIds = filteredLeaves
+                    .filter(leave => leave.status === 'pending' && 
+                           (leave.dept_manager_id === userRoles.userId || 
+                            userRoles.managedDepartments?.includes(leave.employee?.Department)))
+                    .map(leave => leave.id);
+            } else if (userRoles.isHrdManager) {
+                selectableIds = filteredLeaves
+                    .filter(leave => leave.status === 'manager_approved')
+                    .map(leave => leave.id);
+            } else if (userRoles.isSuperAdmin) {
+                selectableIds = filteredLeaves
+                    .filter(leave => leave.status === 'pending' || leave.status === 'manager_approved')
+                    .map(leave => leave.id);
+            }
+            
+            setSelectedIds(selectableIds);
         } else {
             setSelectedIds([]);
         }
     };
 
     const toggleSelectItem = (id) => {
+        if (processing || localProcessing) return;
+        
         setSelectedIds(prevIds => {
             if (prevIds.includes(id)) {
                 return prevIds.filter(itemId => itemId !== id);
@@ -291,6 +338,7 @@ const SLVLList = ({ leaves, onStatusUpdate, onDelete, refreshInterval = 5000 }) 
             alert('Please select at least one leave request');
             return;
         }
+        if (processing || localProcessing) return;
         setShowBulkActionModal(true);
     };
 
@@ -299,36 +347,45 @@ const SLVLList = ({ leaves, onStatusUpdate, onDelete, refreshInterval = 5000 }) 
     };
 
     const handleBulkStatusUpdate = (status, remarks) => {
-        if (typeof onStatusUpdate === 'function') {
-            // Create a promise array for all updates
-            const updatePromises = selectedIds.map(id => {
-                return new Promise((resolve, reject) => {
-                    try {
-                        onStatusUpdate(id, { status, remarks });
-                        resolve();
-                    } catch (error) {
-                        reject(error);
+        setLocalProcessing(true);
+        
+        const data = {
+            leave_ids: selectedIds,
+            status: status,
+            remarks: remarks
+        };
+        
+        router.post(route('slvl.bulkUpdateStatus'), data, {
+            preserveScroll: true,
+            onSuccess: (response) => {
+                setSelectedIds([]);
+                setSelectAll(false);
+                
+                router.reload({
+                    only: ['leaves'],
+                    preserveScroll: true,
+                    onFinish: () => {
+                        setLocalProcessing(false);
                     }
                 });
-            });
-
-            // Execute all updates
-            Promise.all(updatePromises)
-                .then(() => {
-                    // Clear selections after successful update
-                    setSelectedIds([]);
-                    setSelectAll(false);
-                })
-                .catch(error => {
-                    console.error('Error during bulk update:', error);
-                });
-        }
+            },
+            onError: (errors) => {
+                console.error('Error during bulk update:', errors);
+                toast.error('Failed to update leave requests: ' + 
+                    (errors?.message || 'Unknown error'));
+                setLocalProcessing(false);
+            }
+        });
+        
         handleCloseBulkActionModal();
     };
     
-    // Export to Excel functionality
+    // Export functionality
     const exportToExcel = () => {
-        // Build query parameters from current filters
+        if (processing || localProcessing || exporting) return;
+        
+        setExporting(true);
+        
         const queryParams = new URLSearchParams();
         
         if (filterStatus) {
@@ -351,53 +408,104 @@ const SLVLList = ({ leaves, onStatusUpdate, onDelete, refreshInterval = 5000 }) 
             queryParams.append('to_date', dateRange.to);
         }
         
-        // Generate the export URL with the current filters
         const exportUrl = `/slvl/export?${queryParams.toString()}`;
         
-        // Open the URL in a new tab/window to download the file
-        window.open(exportUrl, '_blank');
+        const link = document.createElement('a');
+        link.href = exportUrl;
+        link.target = '_blank';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        setTimeout(() => {
+            setExporting(false);
+        }, 2000);
     };
 
-    // Get count of selectable (pending) items
-    const pendingItemsCount = filteredLeaves.filter(leave => leave.status === 'pending').length;
+    const canSelectLeave = (leave) => {
+        if (userRoles.isSuperAdmin) {
+            return leave.status === 'pending' || leave.status === 'manager_approved';
+        } else if (userRoles.isDepartmentManager) {
+            return leave.status === 'pending' && 
+                   (leave.dept_manager_id === userRoles.userId || 
+                    userRoles.managedDepartments?.includes(leave.employee?.Department));
+        } else if (userRoles.isHrdManager) {
+            return leave.status === 'manager_approved';
+        }
+        return false;
+    };
+
+    const selectableItemsCount = filteredLeaves.filter(leave => canSelectLeave(leave)).length;
+    const bulkApprovalLevel = userRoles.isDepartmentManager ? 'department' : 'hrd';
 
     return (
-        <div className="bg-white shadow-md rounded-lg overflow-hidden flex flex-col h-[62vh]">
+        <div className="bg-white shadow-md rounded-lg overflow-hidden flex flex-col h-[62vh] relative">
+            {/* Global loading overlay */}
+            {(processing || localProcessing) && (
+                <div className="absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center z-40">
+                    <div className="text-center">
+                        <Loader2 className="h-8 w-8 animate-spin mx-auto mb-2 text-indigo-600" />
+                        <p className="text-sm text-gray-600">
+                            {processing ? 'Processing leave requests...' : 'Updating data...'}
+                        </p>
+                    </div>
+                </div>
+            )}
+            
             <div className="p-4 border-b">
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center space-y-4 md:space-y-0">
-                    <h3 className="text-lg font-semibold">Leave Requests</h3>
+                    <h3 className="text-lg font-semibold">Leave Requests (SLVL)</h3>
                     
                     <div className="flex flex-wrap gap-2 w-full md:w-auto">
                         {/* Export Button */}
                         <button
                             onClick={exportToExcel}
-                            className="px-3 py-1 bg-green-600 text-white rounded-md text-sm hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 flex items-center"
+                            className="px-3 py-1 bg-green-600 text-white rounded-md text-sm hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 flex items-center disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
                             title="Export to Excel"
+                            disabled={exporting || processing || localProcessing}
                         >
-                            <Download className="h-4 w-4 mr-1" />
-                            Export
+                            {exporting ? (
+                                <>
+                                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                                    Exporting...
+                                </>
+                            ) : (
+                                <>
+                                    <Download className="h-4 w-4 mr-1" />
+                                    Export
+                                </>
+                            )}
                         </button>
                         
                         {/* Bulk Action Button */}
                         {selectedIds.length > 0 && (
                             <button
                                 onClick={handleOpenBulkActionModal}
-                                className="px-3 py-1 bg-indigo-600 text-white rounded-md text-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                className="px-3 py-1 bg-indigo-600 text-white rounded-md text-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 flex items-center disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
+                                disabled={processing || localProcessing}
                             >
-                                Bulk Action ({selectedIds.length})
+                                {(localProcessing || processing) ? (
+                                    <>
+                                        <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                                        Processing...
+                                    </>
+                                ) : (
+                                    `Bulk Action (${selectedIds.length})`
+                                )}
                             </button>
                         )}
                         
                         {/* Status Filter */}
                         <div className="flex items-center">
                             <select
-                                id="statusFilter"
                                 className="rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                 value={filterStatus}
                                 onChange={handleStatusFilterChange}
+                                disabled={processing || localProcessing}
                             >
                                 <option value="">All Statuses</option>
                                 <option value="pending">Pending</option>
+                                <option value="manager_approved">Dept. Approved</option>
                                 <option value="approved">Approved</option>
                                 <option value="rejected">Rejected</option>
                             </select>
@@ -406,18 +514,15 @@ const SLVLList = ({ leaves, onStatusUpdate, onDelete, refreshInterval = 5000 }) 
                         {/* Type Filter */}
                         <div className="flex items-center">
                             <select
-                                id="typeFilter"
                                 className="rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                 value={filterType}
                                 onChange={handleTypeFilterChange}
+                                disabled={processing || localProcessing}
                             >
                                 <option value="">All Types</option>
-                                <option value="sick">Sick Leave</option>
-                                <option value="vacation">Vacation Leave</option>
-                                <option value="emergency">Emergency Leave</option>
-                                <option value="bereavement">Bereavement Leave</option>
-                                <option value="maternity">Maternity Leave</option>
-                                <option value="paternity">Paternity Leave</option>
+                                {leaveTypes.map(type => (
+                                    <option key={type.value} value={type.value}>{type.label}</option>
+                                ))}
                             </select>
                         </div>
                     </div>
@@ -435,6 +540,7 @@ const SLVLList = ({ leaves, onStatusUpdate, onDelete, refreshInterval = 5000 }) 
                             className="pl-10 w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                             value={searchTerm}
                             onChange={handleSearchChange}
+                            disabled={processing || localProcessing}
                         />
                     </div>
                     
@@ -449,6 +555,7 @@ const SLVLList = ({ leaves, onStatusUpdate, onDelete, refreshInterval = 5000 }) 
                                 className="rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                 value={dateRange.from}
                                 onChange={(e) => handleDateRangeChange('from', e.target.value)}
+                                disabled={processing || localProcessing}
                             />
                         </div>
                         
@@ -462,6 +569,7 @@ const SLVLList = ({ leaves, onStatusUpdate, onDelete, refreshInterval = 5000 }) 
                                 className="rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                 value={dateRange.to}
                                 onChange={(e) => handleDateRangeChange('to', e.target.value)}
+                                disabled={processing || localProcessing}
                             />
                         </div>
                         
@@ -469,8 +577,9 @@ const SLVLList = ({ leaves, onStatusUpdate, onDelete, refreshInterval = 5000 }) 
                         {(filterStatus || filterType || searchTerm || dateRange.from || dateRange.to) && (
                             <button
                                 onClick={clearFilters}
-                                className="px-3 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md text-sm flex items-center"
+                                className="px-3 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md text-sm flex items-center disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
                                 title="Clear all filters"
+                                disabled={processing || localProcessing}
                             >
                                 <X className="h-4 w-4 mr-1" />
                                 Clear
@@ -484,13 +593,14 @@ const SLVLList = ({ leaves, onStatusUpdate, onDelete, refreshInterval = 5000 }) 
                 <table className="min-w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50 sticky top-0 z-10">
                         <tr>
-                            {pendingItemsCount > 0 && (
+                            {selectableItemsCount > 0 && (
                                 <th scope="col" className="px-4 py-3 w-10">
                                     <input
                                         type="checkbox"
                                         className="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
-                                        checked={selectAll && selectedIds.length === pendingItemsCount}
+                                        checked={selectAll && selectedIds.length === selectableItemsCount}
                                         onChange={toggleSelectAll}
+                                        disabled={processing || localProcessing}
                                     />
                                 </th>
                             )}
@@ -507,10 +617,10 @@ const SLVLList = ({ leaves, onStatusUpdate, onDelete, refreshInterval = 5000 }) 
                                 Days
                             </th>
                             <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Pay
+                                Status
                             </th>
                             <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Status
+                                Filed By
                             </th>
                             <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                                 Actions
@@ -520,21 +630,24 @@ const SLVLList = ({ leaves, onStatusUpdate, onDelete, refreshInterval = 5000 }) 
                     <tbody className="bg-white divide-y divide-gray-200">
                         {filteredLeaves.length === 0 ? (
                             <tr>
-                                <td colSpan={pendingItemsCount > 0 ? "8" : "7"} className="px-6 py-4 text-center text-sm text-gray-500">
-                                    No leave records found
+                                <td colSpan={selectableItemsCount > 0 ? "8" : "7"} className="px-6 py-4 text-center text-sm text-gray-500">
+                                    {processing || localProcessing ? 'Loading leave records...' : 'No leave records found'}
                                 </td>
                             </tr>
                         ) : (
                             filteredLeaves.map(leave => (
-                                <tr key={leave.id} className="hover:bg-gray-50">
-                                    {pendingItemsCount > 0 && (
+                                <tr key={leave.id} className={`hover:bg-gray-50 transition-colors duration-200 ${
+                                    (deletingId === leave.id || updatingId === leave.id) ? 'opacity-50' : ''
+                                }`}>
+                                    {selectableItemsCount > 0 && (
                                         <td className="px-4 py-4">
-                                            {leave.status === 'pending' && (
+                                            {canSelectLeave(leave) && (
                                                 <input
                                                     type="checkbox"
                                                     className="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                                     checked={selectedIds.includes(leave.id)}
                                                     onChange={() => toggleSelectItem(leave.id)}
+                                                    disabled={processing || localProcessing || deletingId === leave.id || updatingId === leave.id}
                                                 />
                                             )}
                                         </td>
@@ -546,49 +659,69 @@ const SLVLList = ({ leaves, onStatusUpdate, onDelete, refreshInterval = 5000 }) 
                                                 'Unknown employee'}
                                         </div>
                                         <div className="text-sm text-gray-500">
-                                            {leave.employee?.idno || 'N/A'}
+                                            {leave.employee?.idno || 'N/A'} • {leave.employee?.Department || 'No Dept.'}
                                         </div>
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                        {getLeaveTypeLabel(leave.type)}
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap">
                                         <div className="text-sm text-gray-900">
-                                            {leave.start_date && leave.end_date ? 
-                                                `${formatDate(leave.start_date)} - ${formatDate(leave.end_date)}` : 
-                                                'N/A'}
+                                            {leave.type ? leave.type.charAt(0).toUpperCase() + leave.type.slice(1) : 'N/A'} Leave
                                         </div>
-                                        {leave.half_day && (
-                                            <div className="text-sm text-gray-500">
-                                                {leave.am_pm.toUpperCase()} Half-Day
-                                            </div>
-                                        )}
+                                        <div className="text-sm text-gray-500">
+                                            {leave.with_pay ? 'With Pay' : 'Without Pay'}
+                                            {leave.half_day && ` • ${leave.am_pm?.toUpperCase()} Half-Day`}
+                                        </div>
+                                    </td>
+                                    <td className="px-6 py-4 whitespace-nowrap">
+                                        <div className="text-sm text-gray-900">
+                                            {leave.start_date ? formatDate(leave.start_date) : 'N/A'}
+                                        </div>
+                                        <div className="text-sm text-gray-500">
+                                            to {leave.end_date ? formatDate(leave.end_date) : 'N/A'}
+                                        </div>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                        {calculateLeaveDays(leave)}
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                        {leave.with_pay ? 'With Pay' : 'Without Pay'}
+                                        {leave.total_days !== undefined ? 
+                                            `${parseFloat(leave.total_days)} day${parseFloat(leave.total_days) !== 1 ? 's' : ''}` : 
+                                            'N/A'}
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap">
                                         <SLVLStatusBadge status={leave.status} />
                                     </td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                        {leave.creator ? leave.creator.name : 'N/A'}
+                                    </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                        <button
-                                            onClick={() => handleViewDetail(leave)}
-                                            className="text-indigo-600 hover:text-indigo-900 mr-3"
-                                        >
-                                            View
-                                        </button>
-                                        
-                                        {leave.status === 'pending' && (
+                                        <div className="flex items-center justify-end space-x-2">
                                             <button
-                                                onClick={() => handleDelete(leave.id)}
-                                                className="text-red-600 hover:text-red-900"
+                                                onClick={() => handleViewDetail(leave)}
+                                                className="text-indigo-600 hover:text-indigo-900 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
+                                                disabled={processing || localProcessing || updatingId === leave.id}
                                             >
-                                                Delete
+                                                View
                                             </button>
-                                        )}
+                                            
+                                            {(leave.status === 'pending' && 
+                                              (userRoles.isSuperAdmin || 
+                                               leave.created_by === userRoles.userId || 
+                                               (userRoles.isDepartmentManager && 
+                                                (leave.dept_manager_id === userRoles.userId || 
+                                                 userRoles.managedDepartments?.includes(leave.employee?.Department))))) && (
+                                                <button
+                                                    onClick={() => handleDelete(leave.id)}
+                                                    className="text-red-600 hover:text-red-900 disabled:opacity-50 disabled:cursor-not-allowed flex items-center transition-colors duration-200"
+                                                    disabled={processing || localProcessing || deletingId === leave.id}
+                                                >
+                                                    {deletingId === leave.id ? (
+                                                        <>
+                                                            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                                            Deleting...
+                                                        </>
+                                                    ) : (
+                                                        'Delete'
+                                                    )}
+                                                </button>
+                                            )}
+                                        </div>
                                     </td>
                                 </tr>
                             ))
@@ -597,21 +730,50 @@ const SLVLList = ({ leaves, onStatusUpdate, onDelete, refreshInterval = 5000 }) 
                 </table>
             </div>
             
+            {/* Footer with summary information */}
+            <div className="px-4 py-3 bg-gray-50 border-t text-sm text-gray-600">
+                <div className="flex justify-between items-center">
+                    <div>
+                        Showing {filteredLeaves.length} of {localLeaves.length} leave requests
+                        {selectedIds.length > 0 && (
+                            <span className="ml-4 text-indigo-600 font-medium">
+                                {selectedIds.length} selected
+                            </span>
+                        )}
+                    </div>
+                    
+                    {/* Processing indicator */}
+                    {(processing || localProcessing) && (
+                        <div className="flex items-center text-indigo-600">
+                            <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                            <span className="text-xs">
+                                {processing ? 'Processing...' : 'Updating...'}
+                            </span>
+                        </div>
+                    )}
+                </div>
+            </div>
+            
             {/* Detail Modal */}
             {showModal && selectedLeave && (
                 <SLVLDetailModal
                     leave={selectedLeave}
                     onClose={handleCloseModal}
                     onStatusUpdate={handleStatusUpdate}
+                    userRoles={userRoles}
+                    viewOnly={processing || localProcessing}
+                    processing={updatingId === selectedLeave.id}
                 />
             )}
 
             {/* Bulk Action Modal */}
             {showBulkActionModal && (
-                <MultiBulkActionModal
-                    selectedCount={selectedIds.length}
+                <SLVLBulkActionModal
+                    selectedCount={selectedIds} 
                     onClose={handleCloseBulkActionModal}
                     onSubmit={handleBulkStatusUpdate}
+                    approvalLevel={bulkApprovalLevel}
+                    userRoles={userRoles}
                 />
             )}
         </div>

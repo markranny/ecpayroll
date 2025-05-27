@@ -384,7 +384,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
             ->name('retro.export');
 
         // SLVL (Sick Leave/Vacation Leave) Routes
-        Route::get('/slvl', [SLVLController::class, 'index'])
+        /* Route::get('/slvl', [SLVLController::class, 'index'])
             ->name('slvl.index');
         Route::post('/slvl', [SLVLController::class, 'store'])
             ->name('slvl.store');
@@ -393,7 +393,38 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::delete('/slvl/{id}', [SLVLController::class, 'destroy'])
             ->name('slvl.destroy');
         Route::get('/slvl/export', [SLVLController::class, 'export'])
-            ->name('slvl.export');
+            ->name('slvl.export'); */
+
+        Route::get('/slvl', [SLVLController::class, 'index'])
+        ->name('slvl.index');
+    Route::post('/slvl', [SLVLController::class, 'store'])
+        ->name('slvl.store');
+    Route::post('/slvl/{id}/status', [SLVLController::class, 'updateStatus'])
+        ->name('slvl.updateStatus');
+    Route::delete('/slvl/{id}', [SLVLController::class, 'destroy'])
+        ->name('slvl.destroy');
+    Route::get('/slvl/export', [SLVLController::class, 'export'])
+        ->name('slvl.export');
+    Route::get('/slvl/bank/{employeeId}', [SLVLController::class, 'getSLVLBank'])
+        ->name('slvl.getSLVLBank');
+    
+    // Bulk Actions for managers
+    Route::middleware('role:department_manager,hrd_manager,superadmin')->group(function () {
+        Route::post('/slvl/bulk-update', [SLVLController::class, 'bulkUpdateStatus'])
+            ->name('slvl.bulkUpdateStatus');
+        
+        // Force approve route (superadmin only)
+        Route::middleware('role:superadmin')->group(function () {
+            Route::post('/slvl/force-approve', [SLVLController::class, 'forceApprove'])
+                ->name('slvl.force-approve');
+        });
+    });
+    
+    // Add days to bank (HRD manager and superadmin only)
+    Route::middleware('role:hrd_manager,superadmin')->group(function () {
+        Route::post('/slvl/add-days-to-bank', [SLVLController::class, 'addDaysToBank'])
+            ->name('slvl.addDaysToBank');
+    });
     });
 
     // Finance Routes
