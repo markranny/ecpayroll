@@ -1,7 +1,6 @@
-
 import React, { useState, useEffect } from 'react';
 import { format } from 'date-fns';
-import { Search, RefreshCw } from 'lucide-react';
+import { Search, RefreshCw, Loader2 } from 'lucide-react';
 import { router } from '@inertiajs/react';
 
 const OffsetBankManager = ({ employees }) => {
@@ -21,6 +20,7 @@ const OffsetBankManager = ({ employees }) => {
     
     // Add Hours modal
     const [showAddHoursModal, setShowAddHoursModal] = useState(false);
+    const [isSubmittingHours, setIsSubmittingHours] = useState(false);
     
     // Update filtered employees when search term changes
     useEffect(() => {
@@ -80,19 +80,26 @@ const OffsetBankManager = ({ employees }) => {
             return;
         }
         
+        setIsSubmittingHours(true);
+        
         router.post(route('offsets.addHoursToBank'), addHoursForm, {
-            onSuccess: () => {
+            onSuccess: (page) => {
                 setShowAddHoursModal(false);
+                setIsSubmittingHours(false);
                 
                 // Refresh the bank details
                 if (selectedEmployee && selectedEmployee.id === addHoursForm.employee_id) {
                     handleSelectEmployee(selectedEmployee);
                 }
                 
-                // Refresh employees data
-                router.reload({ only: ['employees'] });
+                // Show success message if available in response
+                if (page.props?.flash?.message) {
+                    // Success message will be handled by toast in parent component
+                }
             },
             onError: (errors) => {
+                setIsSubmittingHours(false);
+                
                 if (errors && typeof errors === 'object') {
                     Object.keys(errors).forEach(key => {
                         alert(errors[key]);
@@ -100,6 +107,9 @@ const OffsetBankManager = ({ employees }) => {
                 } else {
                     alert('An error occurred while adding hours');
                 }
+            },
+            onFinish: () => {
+                setIsSubmittingHours(false);
             }
         });
     };
@@ -340,6 +350,7 @@ const OffsetBankManager = ({ employees }) => {
                                                     ...addHoursForm,
                                                     hours: e.target.value
                                                 })}
+                                                disabled={isSubmittingHours}
                                             />
                                         </div>
                                         
@@ -356,6 +367,7 @@ const OffsetBankManager = ({ employees }) => {
                                                     notes: e.target.value
                                                 })}
                                                 placeholder="Explain why these hours are being added"
+                                                disabled={isSubmittingHours}
                                             ></textarea>
                                         </div>
                                     </div>
@@ -364,15 +376,28 @@ const OffsetBankManager = ({ employees }) => {
                             <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
                                 <button
                                     type="button"
-                                    className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-green-600 text-base font-medium text-white hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 sm:ml-3 sm:w-auto sm:text-sm"
+                                    className={`w-full inline-flex justify-center items-center rounded-md border border-transparent shadow-sm px-4 py-2 text-base font-medium text-white focus:outline-none focus:ring-2 focus:ring-offset-2 sm:ml-3 sm:w-auto sm:text-sm ${
+                                        isSubmittingHours 
+                                            ? 'bg-gray-400 cursor-not-allowed' 
+                                            : 'bg-green-600 hover:bg-green-700 focus:ring-green-500'
+                                    }`}
                                     onClick={handleAddHours}
+                                    disabled={isSubmittingHours}
                                 >
-                                    Add Hours
+                                    {isSubmittingHours ? (
+                                        <>
+                                            <Loader2 className="animate-spin h-4 w-4 mr-2" />
+                                            Adding...
+                                        </>
+                                    ) : (
+                                        'Add Hours'
+                                    )}
                                 </button>
                                 <button
                                     type="button"
                                     className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
                                     onClick={() => setShowAddHoursModal(false)}
+                                    disabled={isSubmittingHours}
                                 >
                                     Cancel
                                 </button>

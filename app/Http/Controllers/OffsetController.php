@@ -778,9 +778,7 @@ class OffsetController extends Controller
         $userRoles = $this->getUserRoles($user);
         
         if (!$userRoles['isHrdManager'] && !$userRoles['isSuperAdmin']) {
-            return response()->json([
-                'message' => 'You are not authorized to perform this action.'
-            ], 403);
+            return back()->with('error', 'You are not authorized to perform this action.');
         }
         
         $validated = $request->validate([
@@ -813,16 +811,11 @@ class OffsetController extends Controller
             
             DB::commit();
             
-            return response()->json([
-                'message' => 'Hours added to offset bank successfully.',
-                'offset_bank' => $offsetBank
-            ]);
+            return back()->with('message', 'Hours added to offset bank successfully.');
             
         } catch (\Exception $e) {
             DB::rollBack();
-            return response()->json([
-                'message' => 'Failed to add hours to offset bank: ' . $e->getMessage()
-            ], 500);
+            return back()->with('error', 'Failed to add hours to offset bank: ' . $e->getMessage());
         }
     }
     

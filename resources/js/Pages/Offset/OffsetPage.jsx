@@ -32,26 +32,33 @@ const OffsetPage = () => {
         }
     }, [flash]);
     
-    // Handle form submission
-    const handleSubmitOffset = (formData) => {
-        router.post(route('offsets.store'), formData, {
-            onSuccess: (page) => {
-                // Update offset list with the new data from the response
-                if (page.props.offsets) {
-                    setOffsetData(page.props.offsets);
+    // Handle form submission with proper async handling
+    const handleSubmitOffset = async (formData) => {
+        return new Promise((resolve, reject) => {
+            router.post(route('offsets.store'), formData, {
+                onSuccess: (page) => {
+                    // Update offset list with the new data from the response
+                    if (page.props.offsets) {
+                        setOffsetData(page.props.offsets);
+                    }
+                    toast.success('Offset request created successfully');
+                    setActiveTab('list'); // Switch to list view after successful submission
+                    resolve(page);
+                },
+                onError: (errors) => {
+                    if (errors && typeof errors === 'object') {
+                        Object.keys(errors).forEach(key => {
+                            toast.error(errors[key]);
+                        });
+                    } else {
+                        toast.error('An error occurred while submitting form');
+                    }
+                    reject(errors);
+                },
+                onFinish: () => {
+                    // This will be handled by the form component
                 }
-                toast.success('Offset request created successfully');
-                setActiveTab('list'); // Switch to list view after successful submission
-            },
-            onError: (errors) => {
-                if (errors && typeof errors === 'object') {
-                    Object.keys(errors).forEach(key => {
-                        toast.error(errors[key]);
-                    });
-                } else {
-                    toast.error('An error occurred while submitting form');
-                }
-            }
+            });
         });
     };
     
@@ -102,25 +109,10 @@ const OffsetPage = () => {
         }
     };
 
-    // Handle adding hours to bank
+    // Handle adding hours to bank - removed async handling since it should redirect
     const handleAddHoursToBank = (data) => {
-        router.post(route('offsets.addHoursToBank'), data, {
-            preserveScroll: true,
-            onSuccess: () => {
-                toast.success(`Successfully added ${data.hours} hours to ${data.employee_name}'s offset bank`);
-                // Refresh offset data
-                router.reload({ only: ['offsets', 'employees'] });
-            },
-            onError: (errors) => {
-                if (errors && typeof errors === 'object') {
-                    Object.keys(errors).forEach(key => {
-                        toast.error(errors[key]);
-                    });
-                } else {
-                    toast.error('An error occurred while adding hours');
-                }
-            }
-        });
+        // This is handled directly by the OffsetBankManager component
+        // No need to handle it here as it uses router.post directly
     };
     
     return (

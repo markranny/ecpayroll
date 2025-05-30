@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { format } from 'date-fns';
+import { Loader2 } from 'lucide-react';
 
 const OffsetForm = ({ employees, offsetTypes, departments, onSubmit }) => {
     const today = format(new Date(), 'yyyy-MM-dd');
@@ -14,6 +15,9 @@ const OffsetForm = ({ employees, offsetTypes, departments, onSubmit }) => {
         reason: '',
         transaction_type: 'credit'
     });
+    
+    // Loading state
+    const [isSubmitting, setIsSubmitting] = useState(false);
     
     // Filtered employees state
     const [filteredEmployees, setFilteredEmployees] = useState([]);
@@ -61,8 +65,10 @@ const OffsetForm = ({ employees, offsetTypes, departments, onSubmit }) => {
     };
     
     // Handle form submission
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
         e.preventDefault();
+        
+        if (isSubmitting) return;
         
         // Validate form
         if (!formData.employee_id) {
@@ -103,22 +109,31 @@ const OffsetForm = ({ employees, offsetTypes, departments, onSubmit }) => {
             }
         }
         
-        // Call the onSubmit prop with the form data
-        onSubmit(formData);
+        setIsSubmitting(true);
         
-        // Reset form after submission 
-        setFormData({
-            employee_id: '',
-            offset_type_id: '',
-            date: today,
-            workday: '',
-            hours: '',
-            reason: '',
-            transaction_type: 'credit'
-        });
-        setSelectedEmployee(null);
-        setSearchTerm('');
-        setSelectedDepartment('');
+        try {
+            // Call the onSubmit prop with the form data
+            await onSubmit(formData);
+            
+            // Reset form after successful submission 
+            setFormData({
+                employee_id: '',
+                offset_type_id: '',
+                date: today,
+                workday: '',
+                hours: '',
+                reason: '',
+                transaction_type: 'credit'
+            });
+            setSelectedEmployee(null);
+            setSearchTerm('');
+            setSelectedDepartment('');
+            
+        } catch (error) {
+            console.error('Error submitting form:', error);
+        } finally {
+            setIsSubmitting(false);
+        }
     };
     
     return (
@@ -142,6 +157,7 @@ const OffsetForm = ({ employees, offsetTypes, departments, onSubmit }) => {
                                     className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                     value={searchTerm}
                                     onChange={(e) => setSearchTerm(e.target.value)}
+                                    disabled={isSubmitting}
                                 />
                             </div>
                             
@@ -150,6 +166,7 @@ const OffsetForm = ({ employees, offsetTypes, departments, onSubmit }) => {
                                     className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                     value={selectedDepartment}
                                     onChange={(e) => setSelectedDepartment(e.target.value)}
+                                    disabled={isSubmitting}
                                 >
                                     <option value="">All Departments</option>
                                     {departments.map((department, index) => (
@@ -194,8 +211,8 @@ const OffsetForm = ({ employees, offsetTypes, departments, onSubmit }) => {
                                                 key={employee.id} 
                                                 className={`hover:bg-gray-50 cursor-pointer ${
                                                     formData.employee_id === employee.id ? 'bg-indigo-50' : ''
-                                                }`}
-                                                onClick={() => handleEmployeeSelect(employee)}
+                                                } ${isSubmitting ? 'pointer-events-none opacity-60' : ''}`}
+                                                onClick={() => !isSubmitting && handleEmployeeSelect(employee)}
                                             >
                                                 <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">
                                                     {employee.idno}
@@ -255,10 +272,11 @@ const OffsetForm = ({ employees, offsetTypes, departments, onSubmit }) => {
                                     className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                     value={formData.offset_type_id}
                                     onChange={handleChange}
+                                    disabled={isSubmitting}
                                     required
                                 >
                                     <option value="">Select Offset Type</option>
-                                    {offsetTypes.map(type => (
+                                    {offsetTypes && offsetTypes.map(type => (
                                         <option key={type.id} value={type.id}>{type.name}</option>
                                     ))}
                                 </select>
@@ -277,6 +295,7 @@ const OffsetForm = ({ employees, offsetTypes, departments, onSubmit }) => {
                                             className="text-indigo-600 border-gray-300 focus:ring-indigo-500"
                                             checked={formData.transaction_type === 'credit'}
                                             onChange={handleChange}
+                                            disabled={isSubmitting}
                                         />
                                         <span className="ml-2">Credit (Add to Bank)</span>
                                     </label>
@@ -288,7 +307,7 @@ const OffsetForm = ({ employees, offsetTypes, departments, onSubmit }) => {
                                             className="text-indigo-600 border-gray-300 focus:ring-indigo-500"
                                             checked={formData.transaction_type === 'debit'}
                                             onChange={handleChange}
-                                            disabled={!selectedEmployee || selectedEmployee.remaining_hours <= 0}
+                                            disabled={isSubmitting || !selectedEmployee || selectedEmployee.remaining_hours <= 0}
                                         />
                                         <span className="ml-2">Debit (Use from Bank)</span>
                                     </label>
@@ -316,6 +335,7 @@ const OffsetForm = ({ employees, offsetTypes, departments, onSubmit }) => {
                                     className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                     value={formData.date}
                                     onChange={handleChange}
+                                    disabled={isSubmitting}
                                     required
                                 />
                                 <p className="mt-1 text-xs text-gray-500">
@@ -337,6 +357,7 @@ const OffsetForm = ({ employees, offsetTypes, departments, onSubmit }) => {
                                     className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                     value={formData.workday}
                                     onChange={handleChange}
+                                    disabled={isSubmitting}
                                     required
                                 />
                                 <p className="mt-1 text-xs text-gray-500">
@@ -361,6 +382,7 @@ const OffsetForm = ({ employees, offsetTypes, departments, onSubmit }) => {
                                     className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                     value={formData.hours}
                                     onChange={handleChange}
+                                    disabled={isSubmitting}
                                     required
                                 />
                                 {formData.transaction_type === 'debit' && selectedEmployee && (
@@ -387,6 +409,7 @@ const OffsetForm = ({ employees, offsetTypes, departments, onSubmit }) => {
                                 placeholder="Provide a detailed reason for the offset request"
                                 value={formData.reason}
                                 onChange={handleChange}
+                                disabled={isSubmitting}
                                 required
                             ></textarea>
                             <p className="mt-1 text-xs text-gray-500">
@@ -402,9 +425,21 @@ const OffsetForm = ({ employees, offsetTypes, departments, onSubmit }) => {
                 <div className="px-4 py-3 bg-gray-50 text-right sm:px-6 border-t">
                     <button
                         type="submit"
-                        className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                        disabled={isSubmitting}
+                        className={`inline-flex justify-center items-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white ${
+                            isSubmitting 
+                                ? 'bg-gray-400 cursor-not-allowed' 
+                                : 'bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500'
+                        }`}
                     >
-                        Submit Offset Request
+                        {isSubmitting ? (
+                            <>
+                                <Loader2 className="animate-spin h-4 w-4 mr-2" />
+                                Submitting...
+                            </>
+                        ) : (
+                            'Submit Offset Request'
+                        )}
                     </button>
                 </div>
             </form>
