@@ -1,4 +1,3 @@
-// resources/js/Pages/SLVL/SLVLPage.jsx
 import React, { useState, useEffect } from 'react';
 import { router, usePage } from '@inertiajs/react';
 import { Head } from '@inertiajs/react';
@@ -6,21 +5,21 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import Sidebar from '@/Components/Sidebar';
 import SLVLList from './SLVLList';
 import SLVLForm from './SLVLForm';
+import SLVLBankManager from './SLVLBankManager';
 import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
-import { Calendar, Plus, ListFilter, Loader2 } from 'lucide-react';
+import { Calendar, Plus, ListFilter, Database } from 'lucide-react';
 
 const SLVLPage = () => {
     const { props } = usePage();
-    const { auth, flash = {}, userRoles = {}, leaves = [], employees = [], departments = [], leaveTypes = [] } = props;
+    const { auth, flash = {}, userRoles = {}, slvls = [], employees = [], leaveTypes = [], departments = [] } = props;
     
     // State to manage component data
-    const [leaveData, setLeaveData] = useState(leaves);
-    const [activeTab, setActiveTab] = useState('create'); // Default to create tab
+    const [slvlData, setSLVLData] = useState(slvls);
+    const [activeTab, setActiveTab] = useState('list');
     const [processing, setProcessing] = useState(false);
-    const [globalLoading, setGlobalLoading] = useState(false);
     
-    // Display flash messages with proper null checking
+    // Display flash messages
     useEffect(() => {
         if (flash && flash.message) {
             toast.success(flash.message);
@@ -29,163 +28,99 @@ const SLVLPage = () => {
             toast.error(flash.error);
         }
         if (flash && flash.errors && Array.isArray(flash.errors)) {
-            flash.errors.forEach(error => {
-                toast.error(error);
-            });
+            flash.errors.forEach(error => toast.error(error));
         }
     }, [flash]);
     
-    // Handle form submission with proper async handling
-    const handleSubmitLeave = (formData) => {
-        return new Promise((resolve, reject) => {
-            setProcessing(true);
-            setGlobalLoading(true);
-            
-            router.post(route('slvl.store'), formData, {
-                preserveScroll: true,
-                onStart: () => {
-                    // Optional: Additional loading state management
-                },
-                onSuccess: (page) => {
-                    // Update leaves list with the new data from the response
-                    if (page.props.leaves) {
-                        setLeaveData(page.props.leaves);
-                    }
-                    
-                    toast.success('Leave requests created successfully');
-                    setActiveTab('list'); // Switch to list view after successful submission
-                    setProcessing(false);
-                    setGlobalLoading(false);
-                    resolve(page);
-                },
-                onError: (errors) => {
-                    setProcessing(false);
-                    setGlobalLoading(false);
-                    
-                    if (errors && typeof errors === 'object') {
-                        Object.keys(errors).forEach(key => {
-                            toast.error(errors[key]);
-                        });
-                    } else {
-                        toast.error('An error occurred while submitting form');
-                    }
-                    reject(errors);
-                },
-                onFinish: () => {
-                    setProcessing(false);
-                    setGlobalLoading(false);
+    // Handle form submission
+    const handleSubmitSLVL = (formData) => {
+        router.post(route('slvl.store'), formData, {
+            onSuccess: (page) => {
+                // Update SLVL list with the new data from the response
+                if (page.props.slvls) {
+                    setSLVLData(page.props.slvls);
                 }
-            });
+                toast.success('SLVL request created successfully');
+                setActiveTab('list'); // Switch to list view after successful submission
+            },
+            onError: (errors) => {
+                if (errors && typeof errors === 'object') {
+                    Object.keys(errors).forEach(key => {
+                        toast.error(errors[key]);
+                    });
+                } else {
+                    toast.error('An error occurred while submitting form');
+                }
+            }
         });
     };
     
-    // Handle status updates (approve/reject) with loading states
+    // Handle status updates (approve/reject)
     const handleStatusUpdate = (id, data) => {
-        if (processing) return Promise.reject('Already processing');
+        if (processing) return;
         
-        // For batch updates, we need to manage the processing state differently
-        const isBatch = Array.isArray(id);
-        if (!isBatch) {
-            console.log("Status update called with:", id, data);
-            setProcessing(true);
-        } else {
-            console.log(`Batch status update for ${id.length} items`);
-            setProcessing(true);
-            setGlobalLoading(true);
-        }
-
-        // Function to process a single update
-        const processSingleUpdate = (leaveId, updateData) => {
-            return new Promise((resolve, reject) => {
-                router.post(route('slvl.updateStatus', leaveId), updateData, {
-                    preserveScroll: true,
-                    onSuccess: (page) => {
-                        // Update leaves list with the new data for individual updates
-                        if (!isBatch && page.props.leaves) {
-                            setLeaveData(page.props.leaves);
-                        }
-                        resolve(page);
-                    },
-                    onError: (errors) => {
-                        let errorMessage = 'An error occurred while updating status';
-                        if (errors && typeof errors === 'object') {
-                            errorMessage = Object.values(errors).join(', ');
-                        }
-                        reject(errorMessage);
-                    }
-                });
-            });
-        };
-
-        // Handle single update
-        if (!isBatch) {
-            return processSingleUpdate(id, data)
-                .then(() => {
-                    toast.success('Leave status updated successfully');
-                    setProcessing(false);
-                })
-                .catch(error => {
-                    toast.error(error);
-                    setProcessing(false);
-                    throw error;
-                });
-        } 
-        // Handle batch update
-        else {
-            const promises = id.map(leaveId => processSingleUpdate(leaveId, data));
-            
-            return Promise.all(promises)
-                .then(responses => {
-                    // Get the latest leave data from the last response
-                    if (responses.length > 0 && responses[responses.length - 1].props.leaves) {
-                        setLeaveData(responses[responses.length - 1].props.leaves);
-                    }
-                    toast.success(`Successfully updated ${id.length} leave requests`);
-                    setProcessing(false);
-                    setGlobalLoading(false);
-                })
-                .catch(error => {
-                    toast.error(`Error updating some leave requests: ${error}`);
-                    setProcessing(false);
-                    setGlobalLoading(false);
-                    throw error;
-                });
-        }
+        setProcessing(true);
+        
+        router.post(route('slvl.updateStatus', id), data, {
+            preserveScroll: true,
+            onSuccess: (page) => {
+                // Update SLVL list
+                if (page.props.slvls) {
+                    setSLVLData(page.props.slvls);
+                }
+                toast.success('SLVL status updated successfully');
+                setProcessing(false);
+            },
+            onError: (errors) => {
+                let errorMessage = 'An error occurred while updating status';
+                if (errors && typeof errors === 'object') {
+                    errorMessage = Object.values(errors).join(', ');
+                }
+                toast.error(errorMessage);
+                setProcessing(false);
+            }
+        });
     };
     
-    // Handle leave deletion with loading state
-    const handleDeleteLeave = (id) => {
-        if (confirm('Are you sure you want to delete this leave request?')) {
-            setProcessing(true);
-            
+    // Handle deletion
+    const handleDeleteSLVL = (id) => {
+        if (confirm('Are you sure you want to delete this SLVL request?')) {
             router.delete(route('slvl.destroy', id), {
                 preserveScroll: true,
                 onSuccess: (page) => {
-                    // Update leaves list with the new data
-                    if (page.props.leaves) {
-                        setLeaveData(page.props.leaves);
+                    // Update SLVL list
+                    if (page.props.slvls) {
+                        setSLVLData(page.props.slvls);
                     } else {
-                        // Remove the deleted item from the current state if not provided in response
-                        setLeaveData(leaveData.filter(leave => leave.id !== id));
+                        // Remove the deleted item from the current state
+                        setSLVLData(slvlData.filter(slvl => slvl.id !== id));
                     }
-                    toast.success('Leave request deleted successfully');
-                    setProcessing(false);
+                    toast.success('SLVL request deleted successfully');
                 },
-                onError: () => {
-                    toast.error('Failed to delete leave request');
-                    setProcessing(false);
-                },
-                onFinish: () => {
-                    setProcessing(false);
-                }
+                onError: () => toast.error('Failed to delete SLVL request')
             });
         }
     };
-    
-    // Handle tab switching with loading state
-    const handleTabSwitch = (tab) => {
-        if (processing) return; // Prevent tab switching during operations
-        setActiveTab(tab);
+
+    // Handle adding days to bank
+    const handleAddDaysToBank = (data) => {
+        router.post(route('slvl.addDaysToBank'), data, {
+            preserveScroll: true,
+            onSuccess: () => {
+                toast.success(`Successfully added ${data.days} ${data.leave_type} leave days to ${data.employee_name}'s bank`);
+                // Refresh SLVL data
+                router.reload({ only: ['slvls', 'employees'] });
+            },
+            onError: (errors) => {
+                if (errors && typeof errors === 'object') {
+                    Object.keys(errors).forEach(key => {
+                        toast.error(errors[key]);
+                    });
+                } else {
+                    toast.error('An error occurred while adding days');
+                }
+            }
+        });
     };
     
     return (
@@ -195,16 +130,6 @@ const SLVLPage = () => {
             <div className="flex min-h-screen bg-gray-50">
                 {/* Include the Sidebar */}
                 <Sidebar />
-                
-                {/* Global Loading Overlay */}
-                {globalLoading && (
-                    <div className="fixed inset-0 bg-black bg-opacity-25 flex items-center justify-center z-50">
-                        <div className="bg-white p-6 rounded-lg shadow-lg text-center">
-                            <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-indigo-600" />
-                            <p className="text-gray-700">Processing leave requests...</p>
-                        </div>
-                    </div>
-                )}
                 
                 {/* Main Content */}
                 <div className="flex-1 p-8 ml-0">
@@ -219,14 +144,6 @@ const SLVLPage = () => {
                                     Manage employee sick leave and vacation leave requests
                                 </p>
                             </div>
-                            
-                            {/* Processing indicator */}
-                            {processing && (
-                                <div className="flex items-center text-indigo-600">
-                                    <Loader2 className="h-5 w-5 animate-spin mr-2" />
-                                    <span className="text-sm">Processing...</span>
-                                </div>
-                            )}
                         </div>
                 
                         <div className="bg-white overflow-hidden shadow-sm rounded-lg">
@@ -239,75 +156,71 @@ const SLVLPage = () => {
                                                     activeTab === 'list'
                                                         ? 'border-indigo-500 text-indigo-600'
                                                         : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                                                } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center transition-colors ${
-                                                    processing ? 'opacity-50 cursor-not-allowed' : ''
-                                                }`}
-                                                onClick={() => handleTabSwitch('list')}
-                                                disabled={processing}
+                                                } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center`}
+                                                onClick={() => setActiveTab('list')}
                                             >
                                                 <ListFilter className="w-4 h-4 mr-2" />
-                                                View Leave Requests
-                                                {leaveData.length > 0 && (
-                                                    <span className="ml-2 bg-gray-100 text-gray-600 py-0.5 px-2 rounded-full text-xs">
-                                                        {leaveData.length}
-                                                    </span>
-                                                )}
+                                                View SLVL Requests
                                             </button>
                                             <button
                                                 className={`${
                                                     activeTab === 'create'
                                                         ? 'border-indigo-500 text-indigo-600'
                                                         : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                                                } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center transition-colors ${
-                                                    processing ? 'opacity-50 cursor-not-allowed' : ''
-                                                }`}
-                                                onClick={() => handleTabSwitch('create')}
-                                                disabled={processing}
+                                                } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center`}
+                                                onClick={() => setActiveTab('create')}
                                             >
                                                 <Plus className="w-4 h-4 mr-2" />
-                                                File New Leave Request
+                                                New SLVL Request
                                             </button>
+                                            {(userRoles.isHrdManager || userRoles.isSuperAdmin) && (
+                                                <button
+                                                    className={`${
+                                                        activeTab === 'bank'
+                                                            ? 'border-indigo-500 text-indigo-600'
+                                                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                                                    } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center`}
+                                                    onClick={() => setActiveTab('bank')}
+                                                >
+                                                    <Database className="w-4 h-4 mr-2" />
+                                                    SLVL Bank
+                                                </button>
+                                            )}
                                         </nav>
                                     </div>
                                 </div>
                                 
-                                <div className={`transition-opacity duration-200 ${processing ? 'opacity-50' : ''}`}>
-                                    {activeTab === 'list' ? (
-                                        <SLVLList 
-                                            leaves={leaveData} 
-                                            onStatusUpdate={handleStatusUpdate}
-                                            onDelete={handleDeleteLeave}
-                                            userRoles={userRoles}
-                                            processing={processing}
-                                        />
-                                    ) : (
-                                        <SLVLForm 
-                                            employees={employees} 
-                                            departments={departments} 
-                                            leaveTypes={leaveTypes}
-                                            onSubmit={handleSubmitLeave}
-                                            processing={processing}
-                                        />
-                                    )}
-                                </div>
+                                {activeTab === 'list' && (
+                                    <SLVLList 
+                                        slvls={slvlData} 
+                                        onStatusUpdate={handleStatusUpdate}
+                                        onDelete={handleDeleteSLVL}
+                                        userRoles={userRoles}
+                                    />
+                                )}
+                                
+                                {activeTab === 'create' && (
+                                    <SLVLForm 
+                                        employees={employees} 
+                                        leaveTypes={leaveTypes}
+                                        departments={departments} 
+                                        onSubmit={handleSubmitSLVL}
+                                    />
+                                )}
+
+                                {activeTab === 'bank' && (
+                                    <SLVLBankManager 
+                                        employees={employees}
+                                        onAddDays={handleAddDaysToBank}
+                                    />
+                                )}
                             </div>
                         </div>
                     </div>
                 </div>
             </div>
             
-            <ToastContainer 
-                position="top-right" 
-                autoClose={3000}
-                hideProgressBar={false}
-                newestOnTop={false}
-                closeOnClick
-                rtl={false}
-                pauseOnFocusLoss
-                draggable
-                pauseOnHover
-                theme="light"
-            />
+            <ToastContainer position="top-right" autoClose={3000} />
         </AuthenticatedLayout>
     );
 };

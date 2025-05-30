@@ -10,10 +10,6 @@ const SLVLStatusBadge = ({ status }) => {
             bgColor = 'bg-yellow-500';
             label = 'Pending';
             break;
-        case 'manager_approved':
-            bgColor = 'bg-blue-500';
-            label = 'Dept. Approved';
-            break;
         case 'approved':
             bgColor = 'bg-green-500';
             label = 'Approved';
@@ -21,6 +17,10 @@ const SLVLStatusBadge = ({ status }) => {
         case 'rejected':
             bgColor = 'bg-red-500';
             label = 'Rejected';
+            break;
+        case 'manager_approved':
+            bgColor = 'bg-blue-500';
+            label = 'Dept. Approved';
             break;
         default:
             bgColor = 'bg-gray-500';

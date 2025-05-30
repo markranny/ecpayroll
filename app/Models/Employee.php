@@ -160,4 +160,108 @@ class Employee extends Model
     {
         return $this->hasMany(Overtime::class);
     }
+
+    /**
+ * Get the SLVL banks for the employee.
+ */
+public function slvlBanks()
+{
+    return $this->hasMany(SLVLBank::class);
+}
+
+/**
+ * Get the SLVL requests for the employee.
+ */
+public function slvls()
+{
+    return $this->hasMany(SLVL::class);
+}
+
+/**
+ * Get employee's remaining sick leave days for current year.
+ */
+public function getRemainingSickLeaveDays($year = null)
+{
+    $year = $year ?? now()->year;
+    $bank = $this->slvlBanks()
+        ->where('leave_type', 'sick')
+        ->where('year', $year)
+        ->first();
+    
+    return $bank ? $bank->remaining_days : 0;
+}
+
+/**
+ * Get employee's remaining vacation leave days for current year.
+ */
+public function getRemainingVacationLeaveDays($year = null)
+{
+    $year = $year ?? now()->year;
+    $bank = $this->slvlBanks()
+        ->where('leave_type', 'vacation')
+        ->where('year', $year)
+        ->first();
+    
+    return $bank ? $bank->remaining_days : 0;
+}
+
+/**
+ * Get employee's total leave days taken for current year.
+ */
+public function getTotalLeaveDaysTaken($year = null)
+{
+    $year = $year ?? now()->year;
+    return $this->slvls()
+        ->where('status', 'approved')
+        ->whereYear('start_date', $year)
+        ->sum('total_days');
+}
+
+/**
+ * Get employee's leave statistics.
+ */
+public function getLeaveStatistics($year = null)
+{
+    $year = $year ?? now()->year;
+    
+    $sickBank = $this->slvlBanks()
+        ->where('leave_type', 'sick')
+        ->where('year', $year)
+        ->first();
+        
+    $vacationBank = $this->slvlBanks()
+        ->where('leave_type', 'vacation')
+        ->where('year', $year)
+        ->first();
+    
+    $approvedLeaves = $this->slvls()
+        ->where('status', 'approved')
+        ->whereYear('start_date', $year)
+        ->selectRaw('type, SUM(total_days) as total_days')
+        ->groupBy('type')
+        ->pluck('total_days', 'type');
+    
+    return [
+        'sick_leave' => [
+            'total' => $sickBank ? $sickBank->total_days : 0,
+            'used' => $sickBank ? $sickBank->used_days : 0,
+            'remaining' => $sickBank ? $sickBank->remaining_days : 0,
+        ],
+        'vacation_leave' => [
+            'total' => $vacationBank ? $vacationBank->total_days : 0,
+            'used' => $vacationBank ? $vacationBank->used_days : 0,
+            'remaining' => $vacationBank ? $vacationBank->remaining_days : 0,
+        ],
+        'other_leaves' => [
+            'emergency' => $approvedLeaves['emergency'] ?? 0,
+            'bereavement' => $approvedLeaves['bereavement'] ?? 0,
+            'personal' => $approvedLeaves['personal'] ?? 0,
+            'maternity' => $approvedLeaves['maternity'] ?? 0,
+            'paternity' => $approvedLeaves['paternity'] ?? 0,
+            'study' => $approvedLeaves['study'] ?? 0,
+        ],
+        'total_days_taken' => $this->getTotalLeaveDaysTaken($year),
+        'year' => $year,
+    ];
+}
 }

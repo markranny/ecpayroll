@@ -1,11 +1,7 @@
-// resources/js/Pages/SLVL/SLVLBulkActionModal.jsx
 import React, { useState } from 'react';
-import { router } from '@inertiajs/react';
-import { toast } from 'react-toastify';
-import { Loader2 } from 'lucide-react';
 
-const SLVLBulkActionModal = ({ selectedCount, onClose, onSubmit, approvalLevel, userRoles = {} }) => {
-    const [status, setStatus] = useState(approvalLevel === 'department' ? 'manager_approved' : 'approved');
+const SLVLBulkActionModal = ({ selectedCount, onClose, onSubmit, userRoles = {} }) => {
+    const [status, setStatus] = useState('approved');
     const [remarks, setRemarks] = useState('');
     const [processing, setProcessing] = useState(false);
 
@@ -19,45 +15,9 @@ const SLVLBulkActionModal = ({ selectedCount, onClose, onSubmit, approvalLevel, 
         }
 
         setProcessing(true);
-        
-        // Make the API call directly using router.post
-        const leaveIds = Array.isArray(selectedCount) ? selectedCount : 
-                           typeof selectedCount === 'string' && selectedCount.startsWith('[') ? 
-                           JSON.parse(selectedCount) : [selectedCount];
-        
-        router.post(route('slvl.bulkUpdateStatus'), {
-            leave_ids: leaveIds,
-            status: status,
-            remarks: remarks
-        }, {
-            preserveScroll: true,
-            onSuccess: () => {
-                // Display success message based on the status
-                const actionText = status === 'rejected' 
-                    ? 'rejected' 
-                    : status === 'force_approved' 
-                        ? 'force approved' 
-                        : approvalLevel === 'department' 
-                            ? 'approved (Dept. Level)' 
-                            : 'approved';
-                    
-                // Show success toast with the appropriate message
-                toast.success(`Successfully ${actionText} ${Array.isArray(leaveIds) ? leaveIds.length : 1} leave request${Array.isArray(leaveIds) && leaveIds.length !== 1 ? 's' : ''}`);
-                
-                // Close modal and reset processing state
-                onClose();
-                setProcessing(false);
-                
-                // Reload the page to refresh data
-                window.location.reload();
-            },
-            onError: (errors) => {
-                console.error('Error in bulk action:', errors);
-                toast.error('Failed to process bulk action. Please try again.');
-                setProcessing(false);
-            }
-        });
-    }; // <- This closing brace was missing!
+        onSubmit(status, remarks);
+        setProcessing(false);
+    };
 
     return (
         <div className="fixed inset-0 z-50 overflow-y-auto">
@@ -68,18 +28,7 @@ const SLVLBulkActionModal = ({ selectedCount, onClose, onSubmit, approvalLevel, 
                 
                 <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
                 
-                <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full relative">
-                    
-                    {/* Loading Overlay */}
-                    {processing && (
-                        <div className="absolute inset-0 bg-white bg-opacity-90 flex items-center justify-center z-10">
-                            <div className="text-center">
-                                <Loader2 className="h-8 w-8 animate-spin mx-auto mb-2 text-indigo-600" />
-                                <p className="text-sm text-gray-600">Processing bulk action...</p>
-                            </div>
-                        </div>
-                    )}
-                    
+                <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
                     <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
                         <div className="sm:flex sm:items-start">
                             <div className="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-indigo-100 sm:mx-0 sm:h-10 sm:w-10">
@@ -89,14 +38,12 @@ const SLVLBulkActionModal = ({ selectedCount, onClose, onSubmit, approvalLevel, 
                             </div>
                             <div className="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left w-full">
                                 <h3 className="text-lg leading-6 font-medium text-gray-900">
-                                    Bulk Update {Array.isArray(selectedCount) ? selectedCount.length : 
-                                              typeof selectedCount === 'string' && selectedCount.startsWith('[') ? 
-                                              JSON.parse(selectedCount).length : selectedCount} Leave Request{selectedCount !== 1 ? 's' : ''}
+                                    Bulk Update {selectedCount} SLVL Request{selectedCount !== 1 ? 's' : ''}
                                 </h3>
                                 <div className="mt-4">
                                     <div className="mb-4">
                                         <label className="block text-sm font-medium text-gray-700 mb-1">
-                                            {approvalLevel === 'department' ? 'Department Manager Action' : 'HRD Manager Action'}
+                                            Action
                                         </label>
                                         <div className="flex flex-col space-y-2">
                                             <label className="inline-flex items-center">
@@ -104,14 +51,11 @@ const SLVLBulkActionModal = ({ selectedCount, onClose, onSubmit, approvalLevel, 
                                                     type="radio"
                                                     className="form-radio text-indigo-600"
                                                     name="status"
-                                                    value={approvalLevel === 'department' ? 'manager_approved' : 'approved'}
-                                                    checked={status === (approvalLevel === 'department' ? 'manager_approved' : 'approved')}
-                                                    onChange={() => setStatus(approvalLevel === 'department' ? 'manager_approved' : 'approved')}
-                                                    disabled={processing}
+                                                    value="approved"
+                                                    checked={status === 'approved'}
+                                                    onChange={() => setStatus('approved')}
                                                 />
-                                                <span className="ml-2 text-gray-700">
-                                                    {approvalLevel === 'department' ? 'Approve (Dept. Level)' : 'Final Approve'}
-                                                </span>
+                                                <span className="ml-2 text-gray-700">Approve</span>
                                             </label>
                                             <label className="inline-flex items-center">
                                                 <input
@@ -121,22 +65,18 @@ const SLVLBulkActionModal = ({ selectedCount, onClose, onSubmit, approvalLevel, 
                                                     value="rejected"
                                                     checked={status === 'rejected'}
                                                     onChange={() => setStatus('rejected')}
-                                                    disabled={processing}
                                                 />
                                                 <span className="ml-2 text-gray-700">Reject</span>
                                             </label>
-                                            
-                                            {/* Force Approve option for superadmins only */}
-                                            {userRoles && userRoles.isSuperAdmin && (
+                                            {userRoles.isSuperAdmin && (
                                                 <label className="inline-flex items-center">
                                                     <input
                                                         type="radio"
                                                         className="form-radio text-purple-600"
                                                         name="status"
                                                         value="force_approved"
-                                                        checked={status === "force_approved"}
-                                                        onChange={() => setStatus("force_approved")}
-                                                        disabled={processing}
+                                                        checked={status === 'force_approved'}
+                                                        onChange={() => setStatus('force_approved')}
                                                     />
                                                     <span className="ml-2 text-gray-700">Force Approve (Admin Override)</span>
                                                 </label>
@@ -155,7 +95,7 @@ const SLVLBulkActionModal = ({ selectedCount, onClose, onSubmit, approvalLevel, 
                                                 </div>
                                                 <div className="ml-3">
                                                     <p className="text-sm text-yellow-700">
-                                                        Force approving will bypass the normal approval workflow. This action will be logged.
+                                                        Force approving will bypass the normal approval workflow and ignore leave balance limits. This action will be logged.
                                                     </p>
                                                 </div>
                                             </div>
@@ -171,12 +111,11 @@ const SLVLBulkActionModal = ({ selectedCount, onClose, onSubmit, approvalLevel, 
                                             rows={3}
                                             value={remarks}
                                             onChange={(e) => setRemarks(e.target.value)}
-                                            placeholder={`Enter remarks for leave requests`}
-                                            disabled={processing}
+                                            placeholder={`Enter remarks for SLVL requests`}
                                         ></textarea>
                                         {status === 'rejected' && (
                                             <p className="mt-1 text-sm text-gray-500">
-                                                Remarks are required when rejecting leave requests
+                                                Remarks are required when rejecting SLVL requests
                                             </p>
                                         )}
                                         {status === 'force_approved' && (
@@ -192,30 +131,25 @@ const SLVLBulkActionModal = ({ selectedCount, onClose, onSubmit, approvalLevel, 
                     <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
                         <button
                             type="button"
-                            className={`w-full inline-flex justify-center items-center rounded-md border border-transparent shadow-sm px-4 py-2 ${
+                            className={`w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 ${
                                 status === 'rejected' 
                                     ? 'bg-red-600 hover:bg-red-700 focus:ring-red-500' 
                                     : status === 'force_approved'
                                     ? 'bg-purple-600 hover:bg-purple-700 focus:ring-purple-500'
                                     : 'bg-green-600 hover:bg-green-700 focus:ring-green-500'
-                            } text-base font-medium text-white focus:outline-none focus:ring-2 focus:ring-offset-2 sm:ml-3 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed`}
+                            } text-base font-medium text-white focus:outline-none focus:ring-2 focus:ring-offset-2 sm:ml-3 sm:w-auto sm:text-sm`}
                             onClick={handleSubmit}
                             disabled={processing}
                         >
-                            {processing ? (
-                                <>
-                                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                                    Processing...
-                                </>
-                            ) : (
+                            {processing ? 'Processing...' : (
                                 status === 'rejected' ? 'Reject All' : 
                                 status === 'force_approved' ? 'Force Approve All' :
-                                approvalLevel === 'department' ? 'Approve All (Dept. Level)' : 'Final Approve All'
+                                'Approve All'
                             )}
                         </button>
                         <button
                             type="button"
-                            className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm disabled:opacity-50"
+                            className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
                             onClick={onClose}
                             disabled={processing}
                         >

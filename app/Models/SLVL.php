@@ -10,7 +10,7 @@ class SLVL extends Model
 {
     use HasFactory;
 
-    protected $table = 'slvls';
+    protected $table = 'slvl';
 
     protected $fillable = [
         'employee_id',
@@ -32,6 +32,9 @@ class SLVL extends Model
         'hrd_approved_by',
         'hrd_approved_at',
         'hrd_remarks',
+        'approved_by',
+        'approved_at',
+        'remarks',
     ];
 
     protected $casts = [
@@ -42,6 +45,7 @@ class SLVL extends Model
         'total_days' => 'float',
         'dept_approved_at' => 'datetime',
         'hrd_approved_at' => 'datetime',
+        'approved_at' => 'datetime',
     ];
 
     /**
@@ -85,11 +89,11 @@ class SLVL extends Model
     }
 
     /**
-     * Get the approver (for backward compatibility).
+     * Get the approver (unified approval system).
      */
     public function approver()
     {
-        return $this->hrdApprover ?: $this->departmentApprover;
+        return $this->belongsTo(User::class, 'approved_by');
     }
 
     /**
@@ -138,6 +142,14 @@ class SLVL extends Model
     public function scopeRejected($query)
     {
         return $query->where('status', 'rejected');
+    }
+
+    /**
+     * Scope for current year leaves.
+     */
+    public function scopeCurrentYear($query)
+    {
+        return $query->whereYear('start_date', now()->year);
     }
 
     /**
@@ -247,5 +259,95 @@ class SLVL extends Model
         }
 
         return $query->exists();
+    }
+
+    /**
+     * Calculate total days between start and end date.
+     */
+    public static function calculateTotalDays($startDate, $endDate, $isHalfDay = false)
+    {
+        if ($isHalfDay) {
+            return 0.5;
+        }
+
+        $start = Carbon::parse($startDate);
+        $end = Carbon::parse($endDate);
+        
+        return $start->diffInDays($end) + 1;
+    }
+
+    /**
+     * Get employee's remaining leave days for the current year.
+     */
+    public function getEmployeeRemainingDays($leaveType = null)
+    {
+        $leaveType = $leaveType ?? $this->type;
+        
+        if (!in_array($leaveType, ['sick', 'vacation'])) {
+            return null; // No bank tracking for other leave types
+        }
+
+        $currentYear = now()->year;
+        $bank = SLVLBank::where('employee_id', $this->employee_id)
+            ->where('leave_type', $leaveType)
+            ->where('year', $currentYear)
+            ->first();
+
+        return $bank ? $bank->remaining_days : 0;
+    }
+
+    /**
+     * Check if employee has sufficient leave days.
+     */
+    public function hasSufficientDays()
+    {
+        if (!in_array($this->type, ['sick', 'vacation'])) {
+            return true; // No limit for other leave types
+        }
+
+        $remainingDays = $this->getEmployeeRemainingDays();
+        return $remainingDays >= $this->total_days;
+    }
+
+    /**
+     * Get leave statistics for an employee.
+     */
+    public static function getEmployeeLeaveStats($employeeId, $year = null)
+    {
+        $year = $year ?? now()->year;
+        
+        $query = static::where('employee_id', $employeeId)
+            ->where('status', 'approved')
+            ->whereYear('start_date', $year);
+
+        $stats = [
+            'sick' => $query->clone()->where('type', 'sick')->sum('total_days'),
+            'vacation' => $query->clone()->where('type', 'vacation')->sum('total_days'),
+            'emergency' => $query->clone()->where('type', 'emergency')->sum('total_days'),
+            'bereavement' => $query->clone()->where('type', 'bereavement')->sum('total_days'),
+            'personal' => $query->clone()->where('type', 'personal')->sum('total_days'),
+            'total' => $query->clone()->sum('total_days'),
+        ];
+
+        return $stats;
+    }
+
+    /**
+     * Boot method to handle model events.
+     */
+    protected static function boot()
+    {
+        parent::boot();
+
+        // Auto-calculate total_days before saving
+        static::saving(function ($slvl) {
+            if ($slvl->start_date && $slvl->end_date) {
+                $slvl->total_days = static::calculateTotalDays(
+                    $slvl->start_date, 
+                    $slvl->end_date, 
+                    $slvl->half_day
+                );
+            }
+        });
     }
 }
