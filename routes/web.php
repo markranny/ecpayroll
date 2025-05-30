@@ -406,7 +406,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('/slvl/export', [SLVLController::class, 'export'])
         ->name('slvl.export');
     Route::get('/slvl/bank/{employeeId}', [SLVLController::class, 'getSLVLBank'])
-        ->name('slvl.getSLVLBank');
+    ->name('slvl.getSLVLBank');
     
     // Bulk Actions for managers
     Route::middleware('role:department_manager,hrd_manager,superadmin')->group(function () {

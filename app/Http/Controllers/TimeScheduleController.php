@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use App\Models\TimeSchedule;
 use App\Models\Employee;
+use App\Models\Department;  // Add this import
 use App\Models\DepartmentManager;
 use App\Models\ScheduleType;
 use Illuminate\Support\Facades\DB;
@@ -24,12 +25,10 @@ class TimeScheduleController extends Controller
         $user = Auth::user();
         $userRoles = $this->getUserRoles($user);
         
-        // Get all departments for filtering
-        $departments = Employee::select('Department')
-            ->distinct()
-            ->whereNotNull('Department')
-            ->orderBy('Department')
-            ->pluck('Department')
+        // Get departments from the departments table instead of employees table
+        $departments = Department::where('is_active', true)
+            ->orderBy('name')
+            ->pluck('name')
             ->toArray();
             
         // Query time schedules based on user role
@@ -57,10 +56,46 @@ class TimeScheduleController extends Controller
         // Sort by latest first
         $timeScheduleQuery->orderBy('created_at', 'desc');
         
-        // Get active employees for the form
+        // Get active employees for the form - Enhanced mapping
         $employees = Employee::where('JobStatus', 'Active')
             ->orderBy('Lname')
-            ->get();
+            ->get()
+            ->map(function ($employee) {
+                // Handle null values properly
+                $firstName = $employee->Fname ?? '';
+                $lastName = $employee->Lname ?? '';
+                $middleName = $employee->MName ?? '';
+                $department = $employee->Department ?? '';
+                $position = $employee->Jobtitle ?? '';
+                
+                // Build name properly
+                $name = trim($lastName);
+                if (!empty($firstName)) {
+                    $name .= !empty($name) ? ', ' . $firstName : $firstName;
+                }
+                if (!empty($middleName)) {
+                    $name .= ' ' . $middleName;
+                }
+                
+                // If name is still empty, use employee ID
+                if (empty($name)) {
+                    $name = 'Employee #' . $employee->id;
+                }
+                
+                return [
+                    'id' => $employee->id,
+                    'idno' => $employee->idno ?? '',
+                    'name' => $name,
+                    'department' => $department,
+                    'position' => $position,
+                    // Keep original fields for backward compatibility
+                    'Fname' => $firstName,
+                    'Lname' => $lastName,
+                    'MName' => $middleName,
+                    'Department' => $department,
+                    'Jobtitle' => $position,
+                ];
+            });
             
         // Get schedule types
         $scheduleTypes = ScheduleType::where('is_active', true)
@@ -160,7 +195,8 @@ class TimeScheduleController extends Controller
                     ->first();
                 
                 if ($existingRequest) {
-                    $errorMessages[] = "Time schedule change request for {$employee->Fname} {$employee->Lname} starting {$validated['effective_date']} already exists";
+                    $employeeName = ($employee->Fname ?? '') . ' ' . ($employee->Lname ?? '');
+                    $errorMessages[] = "Time schedule change request for {$employeeName} starting {$validated['effective_date']} already exists";
                     continue;
                 }
                 
@@ -203,60 +239,60 @@ class TimeScheduleController extends Controller
      * Update the status of a time schedule change request.
      */
     public function updateStatus(Request $request, $id)
-{
-    $user = Auth::user();
-    $timeSchedule = TimeSchedule::findOrFail($id);
-    
-    $validated = $request->validate([
-        'status' => 'required|in:approved,rejected,force_approved',
-        'remarks' => 'nullable|string|max:500',
-    ]);
-
-    // Check permission
-    $canUpdate = false;
-    $isForceApproval = $validated['status'] === 'force_approved';
-    
-    $userRoles = $this->getUserRoles($user);
-    
-    // Only superadmin can force approve
-    if ($isForceApproval && $userRoles['isSuperAdmin']) {
-        $canUpdate = true;
-        // Force approval becomes a regular approval but with admin override
-        $validated['status'] = 'approved';
-    }
-    // Department manager can approve/reject for their department
-    elseif ($userRoles['isDepartmentManager'] && 
-        in_array($timeSchedule->employee->Department, $userRoles['managedDepartments']) &&
-        !$isForceApproval) {
-        $canUpdate = true;
-    }
-    // HRD manager or superadmin can approve/reject any request
-    elseif (($userRoles['isHrdManager'] || $userRoles['isSuperAdmin']) && !$isForceApproval) {
-        $canUpdate = true;
-    }
-
-    if (!$canUpdate) {
-        return back()->with('error', 'You are not authorized to update this time schedule change request.');
-    }
-
-    try {
-        // Special case for force approval by superadmin
-        if ($isForceApproval) {
-            $timeSchedule->remarks = 'Administrative override: ' . ($validated['remarks'] ?? 'Force approved by admin');
-        } else {
-            $timeSchedule->remarks = $validated['remarks'];
-        }
+    {
+        $user = Auth::user();
+        $timeSchedule = TimeSchedule::findOrFail($id);
         
-        $timeSchedule->status = $validated['status'];
-        $timeSchedule->approved_by = $user->id;
-        $timeSchedule->approved_at = now();
-        $timeSchedule->save();
+        $validated = $request->validate([
+            'status' => 'required|in:approved,rejected,force_approved',
+            'remarks' => 'nullable|string|max:500',
+        ]);
 
-        return redirect()->back()->with('message', 'Time schedule change status updated successfully.');
-    } catch (\Exception $e) {
-        return redirect()->back()->with('error', 'Failed to update time schedule change status: ' . $e->getMessage());
+        // Check permission
+        $canUpdate = false;
+        $isForceApproval = $validated['status'] === 'force_approved';
+        
+        $userRoles = $this->getUserRoles($user);
+        
+        // Only superadmin can force approve
+        if ($isForceApproval && $userRoles['isSuperAdmin']) {
+            $canUpdate = true;
+            // Force approval becomes a regular approval but with admin override
+            $validated['status'] = 'approved';
+        }
+        // Department manager can approve/reject for their department
+        elseif ($userRoles['isDepartmentManager'] && 
+            in_array($timeSchedule->employee->Department, $userRoles['managedDepartments']) &&
+            !$isForceApproval) {
+            $canUpdate = true;
+        }
+        // HRD manager or superadmin can approve/reject any request
+        elseif (($userRoles['isHrdManager'] || $userRoles['isSuperAdmin']) && !$isForceApproval) {
+            $canUpdate = true;
+        }
+
+        if (!$canUpdate) {
+            return back()->with('error', 'You are not authorized to update this time schedule change request.');
+        }
+
+        try {
+            // Special case for force approval by superadmin
+            if ($isForceApproval) {
+                $timeSchedule->remarks = 'Administrative override: ' . ($validated['remarks'] ?? 'Force approved by admin');
+            } else {
+                $timeSchedule->remarks = $validated['remarks'];
+            }
+            
+            $timeSchedule->status = $validated['status'];
+            $timeSchedule->approved_by = $user->id;
+            $timeSchedule->approved_at = now();
+            $timeSchedule->save();
+
+            return redirect()->back()->with('message', 'Time schedule change status updated successfully.');
+        } catch (\Exception $e) {
+            return redirect()->back()->with('error', 'Failed to update time schedule change status: ' . $e->getMessage());
+        }
     }
-}
 
     /**
      * Bulk update the status of multiple time schedule change requests.

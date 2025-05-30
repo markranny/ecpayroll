@@ -883,56 +883,56 @@ class SLVLController extends Controller
      * Get the SLVL bank details for an employee.
      */
     public function getSLVLBank($employeeId)
-    {
-        $employee = Employee::findOrFail($employeeId);
-        $currentYear = now()->year;
+{
+    $employee = Employee::findOrFail($employeeId);
+    $currentYear = request('year', now()->year); // Allow year parameter
+    
+    $sickBank = SLVLBank::where('employee_id', $employeeId)
+        ->where('leave_type', 'sick')
+        ->where('year', $currentYear)
+        ->first();
         
-        $sickBank = SLVLBank::where('employee_id', $employeeId)
-            ->where('leave_type', 'sick')
-            ->where('year', $currentYear)
-            ->first();
-            
-        $vacationBank = SLVLBank::where('employee_id', $employeeId)
-            ->where('leave_type', 'vacation')
-            ->where('year', $currentYear)
-            ->first();
-        
-        return response()->json([
-            'employee' => [
-                'id' => $employee->id,
-                'name' => "{$employee->Lname}, {$employee->Fname}",
-                'department' => $employee->Department,
+    $vacationBank = SLVLBank::where('employee_id', $employeeId)
+        ->where('leave_type', 'vacation')
+        ->where('year', $currentYear)
+        ->first();
+    
+    return response()->json([
+        'employee' => [
+            'id' => $employee->id,
+            'name' => "{$employee->Lname}, {$employee->Fname}",
+            'department' => $employee->Department,
+        ],
+        'slvl_banks' => [
+            'sick' => $sickBank ? [
+                'total_days' => $sickBank->total_days,
+                'used_days' => $sickBank->used_days,
+                'remaining_days' => $sickBank->remaining_days,
+                'year' => $sickBank->year,
+                'notes' => $sickBank->notes,
+            ] : [
+                'total_days' => 0,
+                'used_days' => 0,
+                'remaining_days' => 0,
+                'year' => $currentYear,
+                'notes' => null,
             ],
-            'slvl_banks' => [
-                'sick' => $sickBank ? [
-                    'total_days' => $sickBank->total_days,
-                    'used_days' => $sickBank->used_days,
-                    'remaining_days' => $sickBank->remaining_days,
-                    'year' => $sickBank->year,
-                    'notes' => $sickBank->notes,
-                ] : [
-                    'total_days' => 0,
-                    'used_days' => 0,
-                    'remaining_days' => 0,
-                    'year' => $currentYear,
-                    'notes' => null,
-                ],
-                'vacation' => $vacationBank ? [
-                    'total_days' => $vacationBank->total_days,
-                    'used_days' => $vacationBank->used_days,
-                    'remaining_days' => $vacationBank->remaining_days,
-                    'year' => $vacationBank->year,
-                    'notes' => $vacationBank->notes,
-                ] : [
-                    'total_days' => 0,
-                    'used_days' => 0,
-                    'remaining_days' => 0,
-                    'year' => $currentYear,
-                    'notes' => null,
-                ]
+            'vacation' => $vacationBank ? [
+                'total_days' => $vacationBank->total_days,
+                'used_days' => $vacationBank->used_days,
+                'remaining_days' => $vacationBank->remaining_days,
+                'year' => $vacationBank->year,
+                'notes' => $vacationBank->notes,
+            ] : [
+                'total_days' => 0,
+                'used_days' => 0,
+                'remaining_days' => 0,
+                'year' => $currentYear,
+                'notes' => null,
             ]
-        ]);
-    }
+        ]
+    ]);
+}
     
     private function isSuperAdmin($user)
     {

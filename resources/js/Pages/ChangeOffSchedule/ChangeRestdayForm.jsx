@@ -25,16 +25,20 @@ const ChangeRestdayForm = ({ employees, departments, onSubmit }) => {
         if (searchTerm) {
             const term = searchTerm.toLowerCase();
             result = result.filter(employee => 
-                employee.Fname.toLowerCase().includes(term) || 
-                employee.Lname.toLowerCase().includes(term) || 
-                employee.idno?.toString().includes(term)
+                // Use the mapped 'name' field or fall back to individual fields
+                (employee.name && employee.name.toLowerCase().includes(term)) ||
+                (employee.Fname && employee.Fname.toLowerCase().includes(term)) || 
+                (employee.Lname && employee.Lname.toLowerCase().includes(term)) || 
+                (employee.idno && employee.idno.toString().includes(term))
             );
         }
         
         // Filter by department
         if (selectedDepartment) {
             result = result.filter(employee => 
-                employee.Department === selectedDepartment
+                // Use either 'department' field (from mapping) or 'Department' field (direct)
+                (employee.department === selectedDepartment) ||
+                (employee.Department === selectedDepartment)
             );
         }
         
@@ -150,6 +154,38 @@ const ChangeRestdayForm = ({ employees, departments, onSubmit }) => {
         setSelectedDepartment('');
     };
     
+    // Helper function to get employee name - handles both mapped and direct data
+    const getEmployeeName = (employee) => {
+        if (employee.name) {
+            return employee.name; // Use mapped name if available
+        }
+        
+        // Fallback to constructing name from individual fields
+        const firstName = employee.Fname || '';
+        const lastName = employee.Lname || '';
+        const middleName = employee.MName || '';
+        
+        let name = lastName;
+        if (firstName) {
+            name += name ? ', ' + firstName : firstName;
+        }
+        if (middleName) {
+            name += ' ' + middleName;
+        }
+        
+        return name || `Employee #${employee.id}`;
+    };
+    
+    // Helper function to get employee department
+    const getEmployeeDepartment = (employee) => {
+        return employee.department || employee.Department || '';
+    };
+    
+    // Helper function to get employee position
+    const getEmployeePosition = (employee) => {
+        return employee.position || employee.Jobtitle || '';
+    };
+    
     // Calculate if all displayed employees are selected
     const allDisplayedSelected = displayedEmployees.length > 0 && 
         displayedEmployees.every(emp => formData.employee_ids.includes(emp.id));
@@ -257,18 +293,18 @@ const ChangeRestdayForm = ({ employees, departments, onSubmit }) => {
                                                     />
                                                 </td>
                                                 <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">
-                                                    {employee.idno}
+                                                    {employee.idno || ''}
                                                 </td>
                                                 <td className="px-4 py-2 whitespace-nowrap">
                                                     <div className="text-sm font-medium text-gray-900">
-                                                        {employee.Lname}, {employee.Fname} {employee.MName || ''}
+                                                        {getEmployeeName(employee)}
                                                     </div>
                                                 </td>
                                                 <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">
-                                                    {employee.Department}
+                                                    {getEmployeeDepartment(employee)}
                                                 </td>
                                                 <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">
-                                                    {employee.Jobtitle}
+                                                    {getEmployeePosition(employee)}
                                                 </td>
                                             </tr>
                                         ))
@@ -283,7 +319,10 @@ const ChangeRestdayForm = ({ employees, departments, onSubmit }) => {
                                     <span className="font-medium">{formData.employee_ids.length} employee(s) selected</span>
                                     {formData.employee_ids.length <= 5 && (
                                         <span className="ml-2">
-                                            ({selectedEmployees.map(emp => emp.Lname).join(', ')})
+                                            ({selectedEmployees.map(emp => {
+                                                const name = getEmployeeName(emp);
+                                                return name.split(',')[0]; // Get last name only for display
+                                            }).join(', ')})
                                         </span>
                                     )}
                                 </div>

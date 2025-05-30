@@ -8,6 +8,7 @@ use App\Models\Offset;
 use App\Models\OffsetBank;
 use App\Models\OffsetType;
 use App\Models\Employee;
+use App\Models\Department;  // Add this import
 use App\Models\DepartmentManager;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Carbon;
@@ -25,12 +26,10 @@ class OffsetController extends Controller
         $user = Auth::user();
         $userRoles = $this->getUserRoles($user);
         
-        // Get all departments for filtering
-        $departments = Employee::select('Department')
-            ->distinct()
-            ->whereNotNull('Department')
-            ->orderBy('Department')
-            ->pluck('Department')
+        // Get departments from the departments table instead of employees table
+        $departments = Department::where('is_active', true)
+            ->orderBy('name')
+            ->pluck('name')
             ->toArray();
             
         // Query offsets based on user role
@@ -112,6 +111,8 @@ class OffsetController extends Controller
             'userRoles' => $userRoles
         ]);
     }
+
+    // ... rest of the methods remain the same ...
 
     private function getUserRoles($user)
     {
@@ -778,7 +779,9 @@ class OffsetController extends Controller
         $userRoles = $this->getUserRoles($user);
         
         if (!$userRoles['isHrdManager'] && !$userRoles['isSuperAdmin']) {
-            return back()->with('error', 'You are not authorized to perform this action.');
+            return response()->json([
+                'message' => 'You are not authorized to perform this action.'
+            ], 403);
         }
         
         $validated = $request->validate([
@@ -811,11 +814,16 @@ class OffsetController extends Controller
             
             DB::commit();
             
-            return back()->with('message', 'Hours added to offset bank successfully.');
+            return response()->json([
+                'message' => 'Hours added to offset bank successfully.',
+                'offset_bank' => $offsetBank
+            ]);
             
         } catch (\Exception $e) {
             DB::rollBack();
-            return back()->with('error', 'Failed to add hours to offset bank: ' . $e->getMessage());
+            return response()->json([
+                'message' => 'Failed to add hours to offset bank: ' . $e->getMessage()
+            ], 500);
         }
     }
     

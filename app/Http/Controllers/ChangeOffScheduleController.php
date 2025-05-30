@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use App\Models\ChangeOffSchedule;
 use App\Models\Employee;
+use App\Models\Department;
 use App\Models\DepartmentManager;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Carbon;
@@ -23,12 +24,10 @@ class ChangeOffScheduleController extends Controller
         $user = Auth::user();
         $userRoles = $this->getUserRoles($user);
         
-        // Get all departments for filtering
-        $departments = Employee::select('Department')
-            ->distinct()
-            ->whereNotNull('Department')
-            ->orderBy('Department')
-            ->pluck('Department')
+        // Get departments from the departments table instead of employees table
+        $departments = Department::where('is_active', true)
+            ->orderBy('name')
+            ->pluck('name')
             ->toArray();
             
         // Query change off schedules based on user role
@@ -56,10 +55,40 @@ class ChangeOffScheduleController extends Controller
         // Sort by latest first
         $changeOffQuery->orderBy('created_at', 'desc');
         
-        // Get active employees for the form
+        // Get active employees for the form - Fixed mapping
         $employees = Employee::where('JobStatus', 'Active')
             ->orderBy('Lname')
-            ->get();
+            ->get()
+            ->map(function ($employee) {
+                // Handle null values properly
+                $firstName = $employee->Fname ?? '';
+                $lastName = $employee->Lname ?? '';
+                $middleName = $employee->MName ?? '';
+                $department = $employee->Department ?? '';
+                $position = $employee->Jobtitle ?? '';
+                
+                // Build name properly
+                $name = trim($lastName);
+                if (!empty($firstName)) {
+                    $name .= !empty($name) ? ', ' . $firstName : $firstName;
+                }
+                if (!empty($middleName)) {
+                    $name .= ' ' . $middleName;
+                }
+                
+                // If name is still empty, use employee ID
+                if (empty($name)) {
+                    $name = 'Employee #' . $employee->id;
+                }
+                
+                return [
+                    'id' => $employee->id,
+                    'idno' => $employee->idno ?? '',
+                    'name' => $name,
+                    'department' => $department,
+                    'position' => $position,
+                ];
+            });
             
         // Check if a specific request is selected for viewing
         $selectedId = $request->input('selected');
@@ -148,7 +177,8 @@ class ChangeOffScheduleController extends Controller
                     ->first();
                 
                 if ($existingRequest) {
-                    $errorMessages[] = "Change rest day request for {$employee->Fname} {$employee->Lname} from {$validated['original_date']} to {$validated['requested_date']} already exists";
+                    $employeeName = ($employee->Fname ?? '') . ' ' . ($employee->Lname ?? '');
+                    $errorMessages[] = "Change rest day request for {$employeeName} from {$validated['original_date']} to {$validated['requested_date']} already exists";
                     continue;
                 }
                 
@@ -185,67 +215,67 @@ class ChangeOffScheduleController extends Controller
      * Update the status of a change rest day request.
      */
     public function updateStatus(Request $request, $id)
-{
-    $user = Auth::user();
-    $changeOff = ChangeOffSchedule::findOrFail($id);
-    
-    $validated = $request->validate([
-        'status' => 'required|in:approved,rejected,force_approved',
-        'remarks' => 'nullable|string|max:500',
-    ]);
-
-    // Check permission
-    $canUpdate = false;
-    $isForceApproval = $validated['status'] === 'force_approved';
-    
-    $userRoles = $this->getUserRoles($user);
-    
-    // Only superadmin can force approve
-    if ($isForceApproval && $userRoles['isSuperAdmin']) {
-        $canUpdate = true;
-        // Force approval becomes a regular approval but with admin override
-        $validated['status'] = 'approved';
-    }
-    // Department manager can approve/reject for their department
-    elseif ($userRoles['isDepartmentManager'] && 
-        in_array($changeOff->employee->Department, $userRoles['managedDepartments']) &&
-        !$isForceApproval) {
-        $canUpdate = true;
-    }
-    // HRD manager or superadmin can approve/reject any request
-    elseif (($userRoles['isHrdManager'] || $userRoles['isSuperAdmin']) && !$isForceApproval) {
-        $canUpdate = true;
-    }
-
-    if (!$canUpdate) {
-        return back()->with('error', 'You are not authorized to update this change rest day request.');
-    }
-
-    try {
-        // Special case for force approval by superadmin
-        if ($isForceApproval) {
-            $changeOff->remarks = 'Administrative override: ' . ($validated['remarks'] ?? 'Force approved by admin');
-        } else {
-            $changeOff->remarks = $validated['remarks'];
-        }
+    {
+        $user = Auth::user();
+        $changeOff = ChangeOffSchedule::findOrFail($id);
         
-        $changeOff->status = $validated['status'];
-        $changeOff->approved_by = $user->id;
-        $changeOff->approved_at = now();
-        $changeOff->save();
-
-        // Get filtered change offs for the user
-        $changeOffs = $this->getFilteredChangeOffs($user);
-
-        // Return to previous page with success message
-        return redirect()->back()->with([
-            'message' => 'Change rest day status updated successfully.',
-            'changeOffs' => $changeOffs
+        $validated = $request->validate([
+            'status' => 'required|in:approved,rejected,force_approved',
+            'remarks' => 'nullable|string|max:500',
         ]);
-    } catch (\Exception $e) {
-        return redirect()->back()->with('error', 'Failed to update change rest day status: ' . $e->getMessage());
+
+        // Check permission
+        $canUpdate = false;
+        $isForceApproval = $validated['status'] === 'force_approved';
+        
+        $userRoles = $this->getUserRoles($user);
+        
+        // Only superadmin can force approve
+        if ($isForceApproval && $userRoles['isSuperAdmin']) {
+            $canUpdate = true;
+            // Force approval becomes a regular approval but with admin override
+            $validated['status'] = 'approved';
+        }
+        // Department manager can approve/reject for their department
+        elseif ($userRoles['isDepartmentManager'] && 
+            in_array($changeOff->employee->Department, $userRoles['managedDepartments']) &&
+            !$isForceApproval) {
+            $canUpdate = true;
+        }
+        // HRD manager or superadmin can approve/reject any request
+        elseif (($userRoles['isHrdManager'] || $userRoles['isSuperAdmin']) && !$isForceApproval) {
+            $canUpdate = true;
+        }
+
+        if (!$canUpdate) {
+            return back()->with('error', 'You are not authorized to update this change rest day request.');
+        }
+
+        try {
+            // Special case for force approval by superadmin
+            if ($isForceApproval) {
+                $changeOff->remarks = 'Administrative override: ' . ($validated['remarks'] ?? 'Force approved by admin');
+            } else {
+                $changeOff->remarks = $validated['remarks'];
+            }
+            
+            $changeOff->status = $validated['status'];
+            $changeOff->approved_by = $user->id;
+            $changeOff->approved_at = now();
+            $changeOff->save();
+
+            // Get filtered change offs for the user
+            $changeOffs = $this->getFilteredChangeOffs($user);
+
+            // Return to previous page with success message
+            return redirect()->back()->with([
+                'message' => 'Change rest day status updated successfully.',
+                'changeOffs' => $changeOffs
+            ]);
+        } catch (\Exception $e) {
+            return redirect()->back()->with('error', 'Failed to update change rest day status: ' . $e->getMessage());
+        }
     }
-}
 
     /**
      * Bulk update the status of multiple change rest day requests.
@@ -353,42 +383,42 @@ class ChangeOffScheduleController extends Controller
     }
 
     public function destroy($id)
-{
-    $user = Auth::user();
-    $changeOff = ChangeOffSchedule::findOrFail($id);
-    
-    // Only allow deletion if status is pending and user has permission
-    if ($changeOff->status !== 'pending') {
-        return back()->with('error', 'Only pending change rest day requests can be deleted');
+    {
+        $user = Auth::user();
+        $changeOff = ChangeOffSchedule::findOrFail($id);
+        
+        // Only allow deletion if status is pending and user has permission
+        if ($changeOff->status !== 'pending') {
+            return back()->with('error', 'Only pending change rest day requests can be deleted');
+        }
+        
+        $userRoles = $this->getUserRoles($user);
+        $canDelete = false;
+        
+        // Check permissions
+        if ($userRoles['isSuperAdmin']) {
+            $canDelete = true;
+        } elseif ($changeOff->employee_id === $userRoles['employeeId']) {
+            // Users can delete their own pending requests
+            $canDelete = true;
+        } elseif ($userRoles['isDepartmentManager'] && 
+                in_array($changeOff->employee->Department, $userRoles['managedDepartments'])) {
+            $canDelete = true;
+        } elseif ($userRoles['isHrdManager']) {
+            $canDelete = true;
+        }
+        
+        if (!$canDelete) {
+            return back()->with('error', 'You are not authorized to delete this change rest day request');
+        }
+        
+        try {
+            $changeOff->delete();
+            return back()->with('message', 'Change rest day request deleted successfully');
+        } catch (\Exception $e) {
+            return back()->with('error', 'Failed to delete change rest day request: ' . $e->getMessage());
+        }
     }
-    
-    $userRoles = $this->getUserRoles($user);
-    $canDelete = false;
-    
-    // Check permissions
-    if ($userRoles['isSuperAdmin']) {
-        $canDelete = true;
-    } elseif ($changeOff->employee_id === $userRoles['employeeId']) {
-        // Users can delete their own pending requests
-        $canDelete = true;
-    } elseif ($userRoles['isDepartmentManager'] && 
-            in_array($changeOff->employee->Department, $userRoles['managedDepartments'])) {
-        $canDelete = true;
-    } elseif ($userRoles['isHrdManager']) {
-        $canDelete = true;
-    }
-    
-    if (!$canDelete) {
-        return back()->with('error', 'You are not authorized to delete this change rest day request');
-    }
-    
-    try {
-        $changeOff->delete();
-        return back()->with('message', 'Change rest day request deleted successfully');
-    } catch (\Exception $e) {
-        return back()->with('error', 'Failed to delete change rest day request: ' . $e->getMessage());
-    }
-}
 
     /**
      * Export change rest day requests to Excel.
