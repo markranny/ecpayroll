@@ -32,25 +32,49 @@ const SLVLPage = () => {
         }
     }, [flash]);
     
-    // Handle form submission
+    // Handle form submission with file upload
     const handleSubmitSLVL = (formData) => {
+        if (processing) return;
+        
+        setProcessing(true);
+        
+        // Log the form data for debugging
+        console.log('Submitting SLVL form data:', formData);
+        
+        // Submit the form data (FormData object for file upload)
         router.post(route('slvl.store'), formData, {
+            forceFormData: true, // Force multipart/form-data for file upload
+            preserveScroll: true,
             onSuccess: (page) => {
+                console.log('SLVL submission successful:', page);
+                
                 // Update SLVL list with the new data from the response
                 if (page.props.slvls) {
                     setSLVLData(page.props.slvls);
                 }
+                
                 toast.success('SLVL request created successfully');
                 setActiveTab('list'); // Switch to list view after successful submission
+                setProcessing(false);
             },
             onError: (errors) => {
+                console.error('SLVL submission errors:', errors);
+                
                 if (errors && typeof errors === 'object') {
                     Object.keys(errors).forEach(key => {
-                        toast.error(errors[key]);
+                        if (Array.isArray(errors[key])) {
+                            errors[key].forEach(error => toast.error(error));
+                        } else {
+                            toast.error(errors[key]);
+                        }
                     });
                 } else {
                     toast.error('An error occurred while submitting form');
                 }
+                setProcessing(false);
+            },
+            onFinish: () => {
+                setProcessing(false);
             }
         });
     };
@@ -85,6 +109,8 @@ const SLVLPage = () => {
     // Handle deletion
     const handleDeleteSLVL = (id) => {
         if (confirm('Are you sure you want to delete this SLVL request?')) {
+            setProcessing(true);
+            
             router.delete(route('slvl.destroy', id), {
                 preserveScroll: true,
                 onSuccess: (page) => {
@@ -96,8 +122,12 @@ const SLVLPage = () => {
                         setSLVLData(slvlData.filter(slvl => slvl.id !== id));
                     }
                     toast.success('SLVL request deleted successfully');
+                    setProcessing(false);
                 },
-                onError: () => toast.error('Failed to delete SLVL request')
+                onError: () => {
+                    toast.error('Failed to delete SLVL request');
+                    setProcessing(false);
+                }
             });
         }
     };

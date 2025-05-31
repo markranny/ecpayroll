@@ -174,7 +174,7 @@ class SLVLController extends Controller
             'am_pm' => 'nullable|string|in:AM,PM',
             'with_pay' => 'boolean',
             'reason' => 'required|string|max:1000',
-            'documents_path' => 'nullable|string',
+            'supporting_documents' => 'nullable|file|mimes:pdf,doc,docx,jpg,jpeg,png|max:5120', // 5MB max
         ]);
         
         $user = Auth::user();
@@ -205,7 +205,7 @@ class SLVLController extends Controller
             ->exists();
             
         if ($hasOverlap) {
-            return redirect()->back()->with('error', 'Leave request overlaps with existing leave period.');
+            return back()->with('error', 'Leave request overlaps with existing leave period.');
         }
         
         // Check available leave days for sick and vacation leave
@@ -230,13 +230,21 @@ class SLVLController extends Controller
             }
             
             if ($bank->remaining_days < $totalDays) {
-                return redirect()->back()->with('error', "Insufficient {$validated['type']} leave days. Employee only has {$bank->remaining_days} days available.");
+                return back()->with('error', "Insufficient {$validated['type']} leave days. Employee only has {$bank->remaining_days} days available.");
             }
         }
         
         DB::beginTransaction();
         
         try {
+            // Handle file upload
+            $documentsPath = null;
+            if ($request->hasFile('supporting_documents')) {
+                $file = $request->file('supporting_documents');
+                $filename = time() . '_' . $file->getClientOriginalName();
+                $documentsPath = $file->storeAs('slvl_documents', $filename, 'public');
+            }
+            
             $slvl = new SLVL();
             $slvl->employee_id = $validated['employee_id'];
             $slvl->type = $validated['type'];
@@ -247,7 +255,7 @@ class SLVLController extends Controller
             $slvl->total_days = $totalDays;
             $slvl->with_pay = $validated['with_pay'] ?? true;
             $slvl->reason = $validated['reason'];
-            $slvl->documents_path = $validated['documents_path'];
+            $slvl->documents_path = $documentsPath;
             $slvl->status = 'pending';
             $slvl->created_by = $user->id;
             
@@ -255,11 +263,29 @@ class SLVLController extends Controller
             
             DB::commit();
             
-            return redirect()->back()->with('message', 'SLVL request created successfully');
+            // Log the successful creation
+            \Log::info('SLVL request created successfully', [
+                'slvl_id' => $slvl->id,
+                'employee_id' => $validated['employee_id'],
+                'user_id' => $user->id,
+                'type' => $validated['type'],
+                'total_days' => $totalDays
+            ]);
+            
+            // Redirect back with success message and fresh data
+            return redirect()->route('slvl.index')->with('message', 'SLVL request created successfully');
             
         } catch (\Exception $e) {
             DB::rollBack();
-            return redirect()->back()->with('error', 'Error creating SLVL request: ' . $e->getMessage());
+            
+            // Log the error
+            \Log::error('Error creating SLVL request', [
+                'error' => $e->getMessage(),
+                'user_id' => $user->id,
+                'employee_id' => $validated['employee_id'] ?? null
+            ]);
+            
+            return back()->with('error', 'Error creating SLVL request: ' . $e->getMessage());
         }
     }
 
@@ -824,9 +850,7 @@ class SLVLController extends Controller
         $userRoles = $this->getUserRoles($user);
         
         if (!$userRoles['isHrdManager'] && !$userRoles['isSuperAdmin']) {
-            return response()->json([
-                'message' => 'You are not authorized to perform this action.'
-            ], 403);
+            return back()->with('error', 'You are not authorized to perform this action.');
         }
         
         $validated = $request->validate([
@@ -860,22 +884,20 @@ class SLVLController extends Controller
                 ]);
             } else {
                 $bank->total_days += $validated['days'];
-                $bank->notes = $validated['notes'] ?? "Manual addition by {$user->name}";
+                $bank->notes = ($bank->notes ? $bank->notes . "\n" : '') . 
+                              (now()->format('Y-m-d H:i') . " - Added {$validated['days']} days by {$user->name}" . 
+                              ($validated['notes'] ? ": {$validated['notes']}" : ''));
                 $bank->save();
             }
             
             DB::commit();
             
-            return response()->json([
-                'message' => 'Days added to SLVL bank successfully.',
-                'slvl_bank' => $bank
-            ]);
+            // Return redirect with success message instead of JSON
+            return back()->with('message', "Successfully added {$validated['days']} {$validated['leave_type']} leave days to {$employee->Fname} {$employee->Lname}'s bank for year {$validated['year']}.");
             
         } catch (\Exception $e) {
             DB::rollBack();
-            return response()->json([
-                'message' => 'Failed to add days to SLVL bank: ' . $e->getMessage()
-            ], 500);
+            return back()->with('error', 'Failed to add days to SLVL bank: ' . $e->getMessage());
         }
     }
     

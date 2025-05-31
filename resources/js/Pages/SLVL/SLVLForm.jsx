@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { format, addDays, differenceInDays } from 'date-fns';
+import { Upload, X, FileText } from 'lucide-react';
 
 const SLVLForm = ({ employees, leaveTypes, departments, onSubmit }) => {
     const today = format(new Date(), 'yyyy-MM-dd');
@@ -14,7 +15,7 @@ const SLVLForm = ({ employees, leaveTypes, departments, onSubmit }) => {
         am_pm: 'AM',
         with_pay: true,
         reason: '',
-        documents_path: ''
+        supporting_documents: null
     });
     
     // Filtered employees state
@@ -23,6 +24,11 @@ const SLVLForm = ({ employees, leaveTypes, departments, onSubmit }) => {
     const [selectedDepartment, setSelectedDepartment] = useState('');
     const [selectedEmployee, setSelectedEmployee] = useState(null);
     const [totalDays, setTotalDays] = useState(1);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    
+    // File upload state
+    const [uploadedFile, setUploadedFile] = useState(null);
+    const [filePreview, setFilePreview] = useState(null);
     
     // Update filtered employees when search or department selection changes
     useEffect(() => {
@@ -88,6 +94,55 @@ const SLVLForm = ({ employees, leaveTypes, departments, onSubmit }) => {
         }
     };
     
+    // Handle file upload
+    const handleFileUpload = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            // Validate file size (5MB max)
+            if (file.size > 5 * 1024 * 1024) {
+                alert('File size must be less than 5MB');
+                return;
+            }
+            
+            // Validate file type
+            const allowedTypes = ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'image/jpeg', 'image/png', 'image/jpg'];
+            if (!allowedTypes.includes(file.type)) {
+                alert('Only PDF, DOC, DOCX, JPG, JPEG, and PNG files are allowed');
+                return;
+            }
+            
+            setUploadedFile(file);
+            setFormData({
+                ...formData,
+                supporting_documents: file
+            });
+            
+            // Create preview for images
+            if (file.type.startsWith('image/')) {
+                const reader = new FileReader();
+                reader.onload = (e) => setFilePreview(e.target.result);
+                reader.readAsDataURL(file);
+            } else {
+                setFilePreview(null);
+            }
+        }
+    };
+    
+    // Remove uploaded file
+    const removeFile = () => {
+        setUploadedFile(null);
+        setFilePreview(null);
+        setFormData({
+            ...formData,
+            supporting_documents: null
+        });
+        // Reset the file input
+        const fileInput = document.getElementById('supporting_documents');
+        if (fileInput) {
+            fileInput.value = '';
+        }
+    };
+    
     // Handle employee selection
     const handleEmployeeSelect = (employee) => {
         setFormData({
@@ -100,6 +155,8 @@ const SLVLForm = ({ employees, leaveTypes, departments, onSubmit }) => {
     // Handle form submission
     const handleSubmit = (e) => {
         e.preventDefault();
+        
+        if (isSubmitting) return;
         
         // Validate form
         if (!formData.employee_id) {
@@ -139,8 +196,18 @@ const SLVLForm = ({ employees, leaveTypes, departments, onSubmit }) => {
             }
         }
         
+        setIsSubmitting(true);
+        
+        // Create FormData for file upload
+        const submitData = new FormData();
+        Object.keys(formData).forEach(key => {
+            if (formData[key] !== null && formData[key] !== undefined) {
+                submitData.append(key, formData[key]);
+            }
+        });
+        
         // Call the onSubmit prop with the form data
-        onSubmit(formData);
+        onSubmit(submitData);
         
         // Reset form after submission 
         setFormData({
@@ -152,11 +219,14 @@ const SLVLForm = ({ employees, leaveTypes, departments, onSubmit }) => {
             am_pm: 'AM',
             with_pay: true,
             reason: '',
-            documents_path: ''
+            supporting_documents: null
         });
         setSelectedEmployee(null);
         setSearchTerm('');
         setSelectedDepartment('');
+        setUploadedFile(null);
+        setFilePreview(null);
+        setIsSubmitting(false);
     };
     
     return (
@@ -166,7 +236,7 @@ const SLVLForm = ({ employees, leaveTypes, departments, onSubmit }) => {
                 <p className="text-sm text-gray-500">Create leave request for employee</p>
             </div>
             
-            <form onSubmit={handleSubmit}>
+            <form onSubmit={handleSubmit} encType="multipart/form-data">
                 <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
                     {/* Employee Selection Section */}
                     <div className="md:col-span-2 bg-gray-50 p-4 rounded-lg">
@@ -440,19 +510,73 @@ const SLVLForm = ({ employees, leaveTypes, departments, onSubmit }) => {
                                 ></textarea>
                             </div>
                             
+                            {/* File Upload Section */}
                             <div>
-                                <label htmlFor="documents_path" className="block text-sm font-medium text-gray-700 mb-1">
+                                <label htmlFor="supporting_documents" className="block text-sm font-medium text-gray-700 mb-1">
                                     Supporting Documents (Optional)
                                 </label>
-                                <input
-                                    type="text"
-                                    id="documents_path"
-                                    name="documents_path"
-                                    className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
-                                    placeholder="Path or reference to supporting documents"
-                                    value={formData.documents_path}
-                                    onChange={handleChange}
-                                />
+                                
+                                {!uploadedFile ? (
+                                    <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-md hover:border-gray-400 transition-colors">
+                                        <div className="space-y-1 text-center">
+                                            <Upload className="mx-auto h-12 w-12 text-gray-400" />
+                                            <div className="flex text-sm text-gray-600">
+                                                <label
+                                                    htmlFor="supporting_documents"
+                                                    className="relative cursor-pointer bg-white rounded-md font-medium text-indigo-600 hover:text-indigo-500 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-indigo-500"
+                                                >
+                                                    <span>Upload a file</span>
+                                                    <input
+                                                        id="supporting_documents"
+                                                        name="supporting_documents"
+                                                        type="file"
+                                                        className="sr-only"
+                                                        accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+                                                        onChange={handleFileUpload}
+                                                    />
+                                                </label>
+                                                <p className="pl-1">or drag and drop</p>
+                                            </div>
+                                            <p className="text-xs text-gray-500">
+                                                PDF, DOC, DOCX, JPG, JPEG, PNG up to 5MB
+                                            </p>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="mt-1 bg-white border border-gray-300 rounded-md p-3">
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex items-center space-x-3">
+                                                <div className="flex-shrink-0">
+                                                    {uploadedFile.type.startsWith('image/') ? (
+                                                        <img 
+                                                            src={filePreview} 
+                                                            alt="Preview" 
+                                                            className="h-10 w-10 object-cover rounded"
+                                                        />
+                                                    ) : (
+                                                        <FileText className="h-10 w-10 text-gray-400" />
+                                                    )}
+                                                </div>
+                                                <div className="flex-1 min-w-0">
+                                                    <p className="text-sm font-medium text-gray-900 truncate">
+                                                        {uploadedFile.name}
+                                                    </p>
+                                                    <p className="text-sm text-gray-500">
+                                                        {(uploadedFile.size / 1024 / 1024).toFixed(2)} MB
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={removeFile}
+                                                className="ml-3 flex-shrink-0 bg-white p-1 rounded-full text-gray-400 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                                            >
+                                                <X className="h-5 w-5" />
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                                
                                 <p className="mt-1 text-xs text-gray-500">
                                     For sick leave, medical certificate may be required
                                 </p>
@@ -464,9 +588,10 @@ const SLVLForm = ({ employees, leaveTypes, departments, onSubmit }) => {
                 <div className="px-4 py-3 bg-gray-50 text-right sm:px-6 border-t">
                     <button
                         type="submit"
-                        className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                        disabled={isSubmitting}
+                        className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                        Submit Leave Request
+                        {isSubmitting ? 'Submitting...' : 'Submit Leave Request'}
                     </button>
                 </div>
             </form>

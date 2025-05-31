@@ -22,6 +22,7 @@ const SLVLBankManager = ({ employees }) => {
     
     // Add Days modal
     const [showAddDaysModal, setShowAddDaysModal] = useState(false);
+    const [submitting, setSubmitting] = useState(false);
     
     // Generate year options (current year ± 3 years)
     const currentYear = new Date().getFullYear();
@@ -111,20 +112,34 @@ const SLVLBankManager = ({ employees }) => {
             return;
         }
         
-        router.post(route('slvl.addDaysToBank'), addDaysForm, {
-            onSuccess: () => {
+        setSubmitting(true);
+        
+        // Create form data object for Inertia
+        const formData = {
+            employee_id: parseInt(addDaysForm.employee_id),
+            leave_type: addDaysForm.leave_type,
+            days: parseFloat(addDaysForm.days),
+            year: parseInt(addDaysForm.year),
+            notes: addDaysForm.notes || ''
+        };
+        
+        router.post(route('slvl.addDaysToBank'), formData, {
+            preserveScroll: true,
+            onSuccess: (page) => {
+                setSubmitting(false);
                 setShowAddDaysModal(false);
                 
-                // Show success message
-                alert(`Successfully added ${addDaysForm.days} ${addDaysForm.leave_type} leave days to ${addDaysForm.employee_name}'s bank`);
+                // Show success message from flash
+                if (page.props?.flash?.message) {
+                    alert(page.props.flash.message);
+                } else {
+                    alert(`Successfully added ${addDaysForm.days} ${addDaysForm.leave_type} leave days to ${addDaysForm.employee_name}'s bank`);
+                }
                 
-                // Refresh the bank details
+                // Refresh the bank details if viewing the same employee
                 if (selectedEmployee && selectedEmployee.id === addDaysForm.employee_id) {
                     handleSelectEmployee(selectedEmployee);
                 }
-                
-                // Refresh employees data
-                router.reload({ only: ['employees'] });
                 
                 // Reset form
                 setAddDaysForm({
@@ -135,9 +150,14 @@ const SLVLBankManager = ({ employees }) => {
                     year: selectedYear,
                     notes: ''
                 });
+                
+                // Reload the page to get fresh data
+                window.location.reload();
             },
             onError: (errors) => {
+                setSubmitting(false);
                 console.error('Error adding days:', errors);
+                
                 if (errors && typeof errors === 'object') {
                     const errorMessages = Object.values(errors).flat();
                     alert('Error: ' + errorMessages.join(', '));
@@ -150,6 +170,8 @@ const SLVLBankManager = ({ employees }) => {
     
     // Handle close modal
     const handleCloseModal = () => {
+        if (submitting) return; // Prevent closing while submitting
+        
         setShowAddDaysModal(false);
         setAddDaysForm({
             employee_id: '',
@@ -521,6 +543,7 @@ const SLVLBankManager = ({ employees }) => {
                                                     className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                                     value={addDaysForm.leave_type}
                                                     onChange={(e) => handleAddDaysFormChange('leave_type', e.target.value)}
+                                                    disabled={submitting}
                                                 >
                                                     <option value="sick">Sick Leave</option>
                                                     <option value="vacation">Vacation Leave</option>
@@ -540,6 +563,7 @@ const SLVLBankManager = ({ employees }) => {
                                                     value={addDaysForm.days}
                                                     onChange={(e) => handleAddDaysFormChange('days', e.target.value)}
                                                     placeholder="Enter number of days"
+                                                    disabled={submitting}
                                                 />
                                                 <p className="text-xs text-gray-500 mt-1">Maximum 100 days can be added at once</p>
                                             </div>
@@ -552,6 +576,7 @@ const SLVLBankManager = ({ employees }) => {
                                                     className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                                     value={addDaysForm.year}
                                                     onChange={(e) => handleAddDaysFormChange('year', parseInt(e.target.value))}
+                                                    disabled={submitting}
                                                 >
                                                     {yearOptions.map(year => (
                                                         <option key={year} value={year}>{year}</option>
@@ -569,6 +594,7 @@ const SLVLBankManager = ({ employees }) => {
                                                     value={addDaysForm.notes}
                                                     onChange={(e) => handleAddDaysFormChange('notes', e.target.value)}
                                                     placeholder="Explain why these days are being added (e.g., Annual allocation, Adjustment, etc.)"
+                                                    disabled={submitting}
                                                 ></textarea>
                                             </div>
                                         </div>
@@ -580,14 +606,15 @@ const SLVLBankManager = ({ employees }) => {
                                     type="button"
                                     className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-blue-600 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:ml-3 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                                     onClick={handleAddDays}
-                                    disabled={!addDaysForm.days || addDaysForm.days <= 0}
+                                    disabled={!addDaysForm.days || addDaysForm.days <= 0 || submitting}
                                 >
-                                    Add Days
+                                    {submitting ? 'Adding Days...' : 'Add Days'}
                                 </button>
                                 <button
                                     type="button"
-                                    className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+                                    className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                                     onClick={handleCloseModal}
+                                    disabled={submitting}
                                 >
                                     Cancel
                                 </button>
