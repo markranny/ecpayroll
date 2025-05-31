@@ -21,6 +21,7 @@ class SLVL extends Model
         'am_pm',
         'total_days',
         'with_pay',
+        'pay_type', // New field for pay type
         'reason',
         'documents_path',
         'status',
@@ -177,6 +178,36 @@ class SLVL extends Model
     }
 
     /**
+     * Check if the leave is with pay.
+     */
+    public function isWithPay()
+    {
+        // Check both new pay_type field and legacy with_pay field
+        return $this->pay_type === 'with_pay' || ($this->pay_type === null && $this->with_pay);
+    }
+
+    /**
+     * Check if the leave is non-pay.
+     */
+    public function isNonPay()
+    {
+        return $this->pay_type === 'non_pay' || ($this->pay_type === null && !$this->with_pay);
+    }
+
+    /**
+     * Get the pay type label.
+     */
+    public function getPayTypeLabel()
+    {
+        if ($this->pay_type) {
+            return $this->pay_type === 'with_pay' ? 'With Pay' : 'Non Pay';
+        }
+        
+        // Fallback to legacy with_pay field
+        return $this->with_pay ? 'With Pay' : 'Non Pay';
+    }
+
+    /**
      * Get the duration in a human readable format.
      */
     public function getDurationAttribute()
@@ -305,6 +336,11 @@ class SLVL extends Model
             return true; // No limit for other leave types
         }
 
+        // Only check for with_pay requests
+        if (!$this->isWithPay()) {
+            return true;
+        }
+
         $remainingDays = $this->getEmployeeRemainingDays();
         return $remainingDays >= $this->total_days;
     }
@@ -347,6 +383,11 @@ class SLVL extends Model
                     $slvl->end_date, 
                     $slvl->half_day
                 );
+            }
+
+            // Sync with_pay field with pay_type for backward compatibility
+            if ($slvl->pay_type) {
+                $slvl->with_pay = $slvl->pay_type === 'with_pay';
             }
         });
     }

@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { format, addDays, differenceInDays } from 'date-fns';
-import { Upload, X, FileText } from 'lucide-react';
+import { Upload, X, FileText, AlertCircle } from 'lucide-react';
 
-const SLVLForm = ({ employees, leaveTypes, departments, onSubmit }) => {
+const SLVLForm = ({ employees, leaveTypes, payOptions, departments, onSubmit }) => {
     const today = format(new Date(), 'yyyy-MM-dd');
     
     // Form state
@@ -13,7 +13,7 @@ const SLVLForm = ({ employees, leaveTypes, departments, onSubmit }) => {
         end_date: today,
         half_day: false,
         am_pm: 'AM',
-        with_pay: true,
+        pay_type: 'with_pay',
         reason: '',
         supporting_documents: null
     });
@@ -152,6 +152,12 @@ const SLVLForm = ({ employees, leaveTypes, departments, onSubmit }) => {
         setSelectedEmployee(employee);
     };
     
+    // Check if current leave type requires documents
+    const requiresDocuments = () => {
+        const selectedLeaveType = leaveTypes.find(type => type.value === formData.type);
+        return selectedLeaveType ? selectedLeaveType.requires_documents : false;
+    };
+    
     // Handle form submission
     const handleSubmit = (e) => {
         e.preventDefault();
@@ -184,8 +190,14 @@ const SLVLForm = ({ employees, leaveTypes, departments, onSubmit }) => {
             return;
         }
         
-        // Check available leave days for sick and vacation leave
-        if (selectedEmployee && ['sick', 'vacation'].includes(formData.type)) {
+        // Check if documents are required but not uploaded
+        if (requiresDocuments() && !uploadedFile) {
+            alert(`Supporting documents are required for ${formData.type} leave`);
+            return;
+        }
+        
+        // Check available leave days for sick and vacation leave (only for with_pay)
+        if (selectedEmployee && ['sick', 'vacation'].includes(formData.type) && formData.pay_type === 'with_pay') {
             const availableDays = formData.type === 'sick' 
                 ? selectedEmployee.sick_leave_days 
                 : selectedEmployee.vacation_leave_days;
@@ -217,7 +229,7 @@ const SLVLForm = ({ employees, leaveTypes, departments, onSubmit }) => {
             end_date: today,
             half_day: false,
             am_pm: 'AM',
-            with_pay: true,
+            pay_type: 'with_pay',
             reason: '',
             supporting_documents: null
         });
@@ -386,6 +398,12 @@ const SLVLForm = ({ employees, leaveTypes, departments, onSubmit }) => {
                                         <option key={type.value} value={type.value}>{type.label}</option>
                                     ))}
                                 </select>
+                                {formData.type && requiresDocuments() && (
+                                    <div className="mt-1 flex items-center text-xs text-amber-600">
+                                        <AlertCircle className="h-3 w-3 mr-1" />
+                                        Supporting documents required for this leave type
+                                    </div>
+                                )}
                             </div>
                             
                             <div>
@@ -459,24 +477,37 @@ const SLVLForm = ({ employees, leaveTypes, departments, onSubmit }) => {
                                 )}
                             </div>
                             
-                            <div className="flex items-center">
-                                <label className="inline-flex items-center">
-                                    <input
-                                        type="checkbox"
-                                        name="with_pay"
-                                        className="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
-                                        checked={formData.with_pay}
-                                        onChange={handleChange}
-                                    />
-                                    <span className="ml-2 text-sm text-gray-700">With Pay</span>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Pay Type <span className="text-red-600">*</span>
                                 </label>
+                                <div className="space-y-2">
+                                    {payOptions.map(option => (
+                                        <label key={option.value} className="inline-flex items-center mr-4">
+                                            <input
+                                                type="radio"
+                                                name="pay_type"
+                                                value={option.value}
+                                                className="text-indigo-600 border-gray-300 focus:ring-indigo-500"
+                                                checked={formData.pay_type === option.value}
+                                                onChange={handleChange}
+                                            />
+                                            <span className="ml-2 text-sm text-gray-700">{option.label}</span>
+                                        </label>
+                                    ))}
+                                </div>
+                                {formData.pay_type === 'non_pay' && (
+                                    <div className="mt-1 text-xs text-blue-600">
+                                        Non-pay leave will not deduct from leave bank balance
+                                    </div>
+                                )}
                             </div>
                             
                             <div className="bg-blue-50 p-3 rounded-md">
                                 <div className="text-sm font-medium text-blue-800">
                                     Total Days: {totalDays} {totalDays === 1 ? 'day' : 'days'}
                                 </div>
-                                {selectedEmployee && ['sick', 'vacation'].includes(formData.type) && (
+                                {selectedEmployee && ['sick', 'vacation'].includes(formData.type) && formData.pay_type === 'with_pay' && (
                                     <div className="text-xs text-blue-700 mt-1">
                                         Available {formData.type} days: {
                                             formData.type === 'sick' 
@@ -513,7 +544,7 @@ const SLVLForm = ({ employees, leaveTypes, departments, onSubmit }) => {
                             {/* File Upload Section */}
                             <div>
                                 <label htmlFor="supporting_documents" className="block text-sm font-medium text-gray-700 mb-1">
-                                    Supporting Documents (Optional)
+                                    Supporting Documents {requiresDocuments() && <span className="text-red-600">*</span>}
                                 </label>
                                 
                                 {!uploadedFile ? (
@@ -533,6 +564,7 @@ const SLVLForm = ({ employees, leaveTypes, departments, onSubmit }) => {
                                                         className="sr-only"
                                                         accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
                                                         onChange={handleFileUpload}
+                                                        required={requiresDocuments()}
                                                     />
                                                 </label>
                                                 <p className="pl-1">or drag and drop</p>
@@ -551,7 +583,7 @@ const SLVLForm = ({ employees, leaveTypes, departments, onSubmit }) => {
                                                         <img 
                                                             src={filePreview} 
                                                             alt="Preview" 
-                                                            className="h-10 w-10 object-cover rounded"
+                                                            className="h-10 w-10 object-cover rounded border"
                                                         />
                                                     ) : (
                                                         <FileText className="h-10 w-10 text-gray-400" />
@@ -578,7 +610,10 @@ const SLVLForm = ({ employees, leaveTypes, departments, onSubmit }) => {
                                 )}
                                 
                                 <p className="mt-1 text-xs text-gray-500">
-                                    For sick leave, medical certificate may be required
+                                    {requiresDocuments() 
+                                        ? `Supporting documents are required for ${formData.type} leave`
+                                        : 'Supporting documents are optional for this leave type'
+                                    }
                                 </p>
                             </div>
                         </div>

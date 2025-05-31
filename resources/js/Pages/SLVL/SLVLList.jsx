@@ -360,6 +360,15 @@ const SLVLList = ({
         return leaveType ? leaveType.label : type?.charAt(0).toUpperCase() + type?.slice(1);
     };
 
+    // Get pay type label
+    const getPayTypeLabel = (slvl) => {
+        if (slvl.pay_type) {
+            return slvl.pay_type === 'with_pay' ? 'With Pay' : 'Non Pay';
+        }
+        // Fallback to legacy with_pay field
+        return slvl.with_pay ? 'With Pay' : 'Non Pay';
+    };
+
     return (
         <div className="bg-white shadow-md rounded-lg overflow-hidden flex flex-col h-[62vh]">
             <div className="p-4 border-b">
@@ -515,6 +524,9 @@ const SLVLList = ({
                                 Days
                             </th>
                             <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Pay Type
+                            </th>
+                            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                 Status
                             </th>
                             <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -528,7 +540,7 @@ const SLVLList = ({
                     <tbody className="bg-white divide-y divide-gray-200">
                         {filteredSLVLs.length === 0 ? (
                             <tr>
-                                <td colSpan={selectableItemsCount > 0 ? "9" : "8"} className="px-6 py-4 text-center text-sm text-gray-500">
+                                <td colSpan={selectableItemsCount > 0 ? "10" : "9"} className="px-6 py-4 text-center text-sm text-gray-500">
                                     No SLVL records found
                                 </td>
                             </tr>
@@ -585,6 +597,15 @@ const SLVLList = ({
                                                 ({slvl.am_pm} half-day)
                                             </div>
                                         )}
+                                    </td>
+                                    <td className="px-6 py-4 whitespace-nowrap">
+                                        <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                                            (slvl.pay_type === 'with_pay' || (!slvl.pay_type && slvl.with_pay)) 
+                                                ? 'bg-green-100 text-green-800' 
+                                                : 'bg-gray-100 text-gray-800'
+                                        }`}>
+                                            {getPayTypeLabel(slvl)}
+                                        </span>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap">
                                         <SLVLStatusBadge status={slvl.status} />

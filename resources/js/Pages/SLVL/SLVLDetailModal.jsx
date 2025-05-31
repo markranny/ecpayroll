@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { format } from 'date-fns';
 import SLVLStatusBadge from './SLVLStatusBadge';
+import FileDisplay from './FileDisplay';
 
 const SLVLDetailModal = ({ slvl, onClose, onStatusUpdate, userRoles = {} }) => {
     const [remarks, setRemarks] = useState('');
@@ -65,6 +66,15 @@ const SLVLDetailModal = ({ slvl, onClose, onStatusUpdate, userRoles = {} }) => {
             'study': 'Study Leave',
         };
         return types[type] || type?.charAt(0).toUpperCase() + type?.slice(1);
+    };
+
+    // Get pay type label
+    const getPayTypeLabel = () => {
+        if (slvl.pay_type) {
+            return slvl.pay_type === 'with_pay' ? 'With Pay' : 'Non Pay';
+        }
+        // Fallback to legacy with_pay field
+        return slvl.with_pay ? 'With Pay' : 'Non Pay';
     };
 
     return (
@@ -151,12 +161,14 @@ const SLVLDetailModal = ({ slvl, onClose, onStatusUpdate, userRoles = {} }) => {
                                         )}
                                     </div>
                                     
-                                    <div className="text-sm font-medium text-gray-500">With Pay</div>
+                                    <div className="text-sm font-medium text-gray-500">Pay Type</div>
                                     <div className="mt-1 text-sm text-gray-900 sm:mt-0">
                                         <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                                            slvl.with_pay ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                                            (slvl.pay_type === 'with_pay' || (!slvl.pay_type && slvl.with_pay)) 
+                                                ? 'bg-green-100 text-green-800' 
+                                                : 'bg-gray-100 text-gray-800'
                                         }`}>
-                                            {slvl.with_pay ? 'Yes' : 'No'}
+                                            {getPayTypeLabel()}
                                         </span>
                                     </div>
                                     
@@ -185,9 +197,7 @@ const SLVLDetailModal = ({ slvl, onClose, onStatusUpdate, userRoles = {} }) => {
                                 {slvl.documents_path && (
                                     <div className="mt-4">
                                         <label className="block text-sm font-medium text-gray-700 mb-1">Supporting Documents:</label>
-                                        <div className="border rounded-md p-3 bg-gray-50 text-sm text-gray-900">
-                                            {slvl.documents_path}
-                                        </div>
+                                        <FileDisplay filePath={slvl.documents_path} />
                                     </div>
                                 )}
                                 

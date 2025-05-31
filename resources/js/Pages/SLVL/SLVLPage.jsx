@@ -12,7 +12,16 @@ import { Calendar, Plus, ListFilter, Database } from 'lucide-react';
 
 const SLVLPage = () => {
     const { props } = usePage();
-    const { auth, flash = {}, userRoles = {}, slvls = [], employees = [], leaveTypes = [], departments = [] } = props;
+    const { 
+        auth, 
+        flash = {}, 
+        userRoles = {}, 
+        slvls = [], 
+        employees = [], 
+        leaveTypes = [], 
+        payOptions = [],
+        departments = [] 
+    } = props;
     
     // State to manage component data
     const [slvlData, setSLVLData] = useState(slvls);
@@ -233,6 +242,7 @@ const SLVLPage = () => {
                                     <SLVLForm 
                                         employees={employees} 
                                         leaveTypes={leaveTypes}
+                                        payOptions={payOptions}
                                         departments={departments} 
                                         onSubmit={handleSubmitSLVL}
                                     />

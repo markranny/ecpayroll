@@ -78,16 +78,22 @@ class SLVLController extends Controller
                 ];
             });
             
-        // Leave types
+        // Leave types with document requirements
         $leaveTypes = [
-            ['value' => 'sick', 'label' => 'Sick Leave'],
-            ['value' => 'vacation', 'label' => 'Vacation Leave'],
-            ['value' => 'emergency', 'label' => 'Emergency Leave'],
-            ['value' => 'bereavement', 'label' => 'Bereavement Leave'],
-            ['value' => 'maternity', 'label' => 'Maternity Leave'],
-            ['value' => 'paternity', 'label' => 'Paternity Leave'],
-            ['value' => 'personal', 'label' => 'Personal Leave'],
-            ['value' => 'study', 'label' => 'Study Leave'],
+            ['value' => 'sick', 'label' => 'Sick Leave', 'requires_documents' => true],
+            ['value' => 'vacation', 'label' => 'Vacation Leave', 'requires_documents' => false],
+            ['value' => 'emergency', 'label' => 'Emergency Leave', 'requires_documents' => true],
+            ['value' => 'bereavement', 'label' => 'Bereavement Leave', 'requires_documents' => true],
+            ['value' => 'maternity', 'label' => 'Maternity Leave', 'requires_documents' => true],
+            ['value' => 'paternity', 'label' => 'Paternity Leave', 'requires_documents' => true],
+            ['value' => 'personal', 'label' => 'Personal Leave', 'requires_documents' => false],
+            ['value' => 'study', 'label' => 'Study Leave', 'requires_documents' => true],
+        ];
+
+        // Pay options
+        $payOptions = [
+            ['value' => 'with_pay', 'label' => 'With Pay'],
+            ['value' => 'non_pay', 'label' => 'Non Pay'],
         ];
         
         // Check if a specific request is selected for viewing
@@ -126,6 +132,7 @@ class SLVLController extends Controller
             'slvls' => $slvls,
             'employees' => $employees,
             'leaveTypes' => $leaveTypes,
+            'payOptions' => $payOptions,
             'departments' => $departments,
             'selectedSLVL' => $selectedSLVL,
             'userRoles' => $userRoles
@@ -165,17 +172,29 @@ class SLVLController extends Controller
      */
     public function store(Request $request)
     {
-        $validated = $request->validate([
+        // Define which leave types require supporting documents
+        $leaveTypesRequiringDocuments = ['sick', 'emergency', 'bereavement', 'maternity', 'paternity', 'study'];
+        
+        // Base validation rules
+        $validationRules = [
             'employee_id' => 'required|integer|exists:employees,id',
             'type' => 'required|string|in:sick,vacation,emergency,bereavement,maternity,paternity,personal,study',
             'start_date' => 'required|date',
             'end_date' => 'required|date|after_or_equal:start_date',
             'half_day' => 'boolean',
             'am_pm' => 'nullable|string|in:AM,PM',
-            'with_pay' => 'boolean',
+            'pay_type' => 'required|string|in:with_pay,non_pay',
             'reason' => 'required|string|max:1000',
-            'supporting_documents' => 'nullable|file|mimes:pdf,doc,docx,jpg,jpeg,png|max:5120', // 5MB max
-        ]);
+        ];
+
+        // Add conditional validation for supporting documents
+        if (in_array($request->input('type'), $leaveTypesRequiringDocuments)) {
+            $validationRules['supporting_documents'] = 'required|file|mimes:pdf,doc,docx,jpg,jpeg,png|max:5120'; // 5MB max
+        } else {
+            $validationRules['supporting_documents'] = 'nullable|file|mimes:pdf,doc,docx,jpg,jpeg,png|max:5120'; // 5MB max
+        }
+
+        $validated = $request->validate($validationRules);
         
         $user = Auth::user();
         
@@ -208,8 +227,8 @@ class SLVLController extends Controller
             return back()->with('error', 'Leave request overlaps with existing leave period.');
         }
         
-        // Check available leave days for sick and vacation leave
-        if (in_array($validated['type'], ['sick', 'vacation'])) {
+        // Check available leave days for sick and vacation leave (only for with_pay requests)
+        if (in_array($validated['type'], ['sick', 'vacation']) && $validated['pay_type'] === 'with_pay') {
             $currentYear = now()->year;
             $bank = SLVLBank::where('employee_id', $validated['employee_id'])
                 ->where('leave_type', $validated['type'])
@@ -253,7 +272,8 @@ class SLVLController extends Controller
             $slvl->half_day = $validated['half_day'] ?? false;
             $slvl->am_pm = $validated['am_pm'];
             $slvl->total_days = $totalDays;
-            $slvl->with_pay = $validated['with_pay'] ?? true;
+            $slvl->with_pay = $validated['pay_type'] === 'with_pay';
+            $slvl->pay_type = $validated['pay_type']; // Store the pay type
             $slvl->reason = $validated['reason'];
             $slvl->documents_path = $documentsPath;
             $slvl->status = 'pending';
@@ -269,6 +289,7 @@ class SLVLController extends Controller
                 'employee_id' => $validated['employee_id'],
                 'user_id' => $user->id,
                 'type' => $validated['type'],
+                'pay_type' => $validated['pay_type'],
                 'total_days' => $totalDays
             ]);
             
@@ -345,8 +366,8 @@ class SLVLController extends Controller
             $slvl->approved_at = now();
             $slvl->save();
             
-            // Update SLVL bank if approved
-            if ($slvl->status === 'approved' && $oldStatus !== 'approved') {
+            // Update SLVL bank if approved and with_pay
+            if ($slvl->status === 'approved' && $oldStatus !== 'approved' && $slvl->with_pay) {
                 if (in_array($slvl->type, ['sick', 'vacation'])) {
                     $currentYear = now()->year;
                     $bank = SLVLBank::where('employee_id', $slvl->employee_id)
@@ -379,7 +400,7 @@ class SLVLController extends Controller
             }
             
             // Undo bank update if status changed from approved to something else
-            if ($oldStatus === 'approved' && $slvl->status !== 'approved') {
+            if ($oldStatus === 'approved' && $slvl->status !== 'approved' && $slvl->with_pay) {
                 if (in_array($slvl->type, ['sick', 'vacation'])) {
                     $currentYear = now()->year;
                     $bank = SLVLBank::where('employee_id', $slvl->employee_id)
@@ -473,8 +494,8 @@ class SLVLController extends Controller
                 $slvl->approved_at = now();
                 $slvl->save();
                 
-                // Update SLVL bank if approved
-                if ($slvl->status === 'approved' && $oldStatus !== 'approved') {
+                // Update SLVL bank if approved and with_pay
+                if ($slvl->status === 'approved' && $oldStatus !== 'approved' && $slvl->with_pay) {
                     if (in_array($slvl->type, ['sick', 'vacation'])) {
                         $currentYear = now()->year;
                         $bank = SLVLBank::where('employee_id', $slvl->employee_id)
@@ -680,7 +701,7 @@ class SLVLController extends Controller
         $sheet->setCellValue('H1', 'Total Days');
         $sheet->setCellValue('I1', 'Half Day');
         $sheet->setCellValue('J1', 'AM/PM');
-        $sheet->setCellValue('K1', 'With Pay');
+        $sheet->setCellValue('K1', 'Pay Type');
         $sheet->setCellValue('L1', 'Reason');
         $sheet->setCellValue('M1', 'Status');
         $sheet->setCellValue('N1', 'Approved By');
@@ -701,7 +722,7 @@ class SLVLController extends Controller
             $sheet->setCellValue('H' . $row, $slvl->total_days);
             $sheet->setCellValue('I' . $row, $slvl->half_day ? 'Yes' : 'No');
             $sheet->setCellValue('J' . $row, $slvl->am_pm ?? '');
-            $sheet->setCellValue('K' . $row, $slvl->with_pay ? 'Yes' : 'No');
+            $sheet->setCellValue('K' . $row, $slvl->pay_type ? ucfirst(str_replace('_', ' ', $slvl->pay_type)) : ($slvl->with_pay ? 'With Pay' : 'Non Pay'));
             $sheet->setCellValue('L' . $row, $slvl->reason);
             $sheet->setCellValue('M' . $row, ucfirst($slvl->status));
             $sheet->setCellValue('N' . $row, $slvl->approver ? $slvl->approver->name : '');
@@ -775,8 +796,8 @@ class SLVLController extends Controller
                 $slvl->remarks = 'Administrative override: ' . $remarks;
                 $slvl->save();
                 
-                // Update SLVL bank
-                if ($oldStatus !== 'approved' && in_array($slvl->type, ['sick', 'vacation'])) {
+                // Update SLVL bank only for with_pay requests
+                if ($oldStatus !== 'approved' && $slvl->with_pay && in_array($slvl->type, ['sick', 'vacation'])) {
                     $currentYear = now()->year;
                     $bank = SLVLBank::where('employee_id', $slvl->employee_id)
                         ->where('leave_type', $slvl->type)
@@ -905,56 +926,56 @@ class SLVLController extends Controller
      * Get the SLVL bank details for an employee.
      */
     public function getSLVLBank($employeeId)
-{
-    $employee = Employee::findOrFail($employeeId);
-    $currentYear = request('year', now()->year); // Allow year parameter
-    
-    $sickBank = SLVLBank::where('employee_id', $employeeId)
-        ->where('leave_type', 'sick')
-        ->where('year', $currentYear)
-        ->first();
+    {
+        $employee = Employee::findOrFail($employeeId);
+        $currentYear = request('year', now()->year); // Allow year parameter
         
-    $vacationBank = SLVLBank::where('employee_id', $employeeId)
-        ->where('leave_type', 'vacation')
-        ->where('year', $currentYear)
-        ->first();
-    
-    return response()->json([
-        'employee' => [
-            'id' => $employee->id,
-            'name' => "{$employee->Lname}, {$employee->Fname}",
-            'department' => $employee->Department,
-        ],
-        'slvl_banks' => [
-            'sick' => $sickBank ? [
-                'total_days' => $sickBank->total_days,
-                'used_days' => $sickBank->used_days,
-                'remaining_days' => $sickBank->remaining_days,
-                'year' => $sickBank->year,
-                'notes' => $sickBank->notes,
-            ] : [
-                'total_days' => 0,
-                'used_days' => 0,
-                'remaining_days' => 0,
-                'year' => $currentYear,
-                'notes' => null,
+        $sickBank = SLVLBank::where('employee_id', $employeeId)
+            ->where('leave_type', 'sick')
+            ->where('year', $currentYear)
+            ->first();
+            
+        $vacationBank = SLVLBank::where('employee_id', $employeeId)
+            ->where('leave_type', 'vacation')
+            ->where('year', $currentYear)
+            ->first();
+        
+        return response()->json([
+            'employee' => [
+                'id' => $employee->id,
+                'name' => "{$employee->Lname}, {$employee->Fname}",
+                'department' => $employee->Department,
             ],
-            'vacation' => $vacationBank ? [
-                'total_days' => $vacationBank->total_days,
-                'used_days' => $vacationBank->used_days,
-                'remaining_days' => $vacationBank->remaining_days,
-                'year' => $vacationBank->year,
-                'notes' => $vacationBank->notes,
-            ] : [
-                'total_days' => 0,
-                'used_days' => 0,
-                'remaining_days' => 0,
-                'year' => $currentYear,
-                'notes' => null,
+            'slvl_banks' => [
+                'sick' => $sickBank ? [
+                    'total_days' => $sickBank->total_days,
+                    'used_days' => $sickBank->used_days,
+                    'remaining_days' => $sickBank->remaining_days,
+                    'year' => $sickBank->year,
+                    'notes' => $sickBank->notes,
+                ] : [
+                    'total_days' => 0,
+                    'used_days' => 0,
+                    'remaining_days' => 0,
+                    'year' => $currentYear,
+                    'notes' => null,
+                ],
+                'vacation' => $vacationBank ? [
+                    'total_days' => $vacationBank->total_days,
+                    'used_days' => $vacationBank->used_days,
+                    'remaining_days' => $vacationBank->remaining_days,
+                    'year' => $vacationBank->year,
+                    'notes' => $vacationBank->notes,
+                ] : [
+                    'total_days' => 0,
+                    'used_days' => 0,
+                    'remaining_days' => 0,
+                    'year' => $currentYear,
+                    'notes' => null,
+                ]
             ]
-        ]
-    ]);
-}
+        ]);
+    }
     
     private function isSuperAdmin($user)
     {
